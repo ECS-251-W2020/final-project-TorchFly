@@ -50,7 +50,6 @@ class My_list():
         all_list = self.safe_list + list(self.temp_list)
         return all_list[item]
 
-
 class AdavancedCheckpointer(BaseCheckpointer):
     """
     Simple Checkpointer implements the basic functions
@@ -101,3 +100,6 @@ class AdavancedCheckpointer(BaseCheckpointer):
         checkpoint = torch.load(checkpoint_path, map_location="cpu")
 
         return checkpoint
+    
+    def find_latest_checkpoint(self):
+        pass 
