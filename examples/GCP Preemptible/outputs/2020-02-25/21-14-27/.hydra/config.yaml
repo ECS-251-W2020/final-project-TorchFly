@@ -1,0 +1,5 @@
+preempt:
+  instance_name: qywu-torchfly
+  loop_interval: 60
+  start_time: 2020-02-25 21:09
+  task_duration: 60

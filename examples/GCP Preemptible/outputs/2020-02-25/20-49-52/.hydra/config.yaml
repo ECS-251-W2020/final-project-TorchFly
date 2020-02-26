@@ -1,0 +1,4 @@
+preempt:
+  instance_name: qywu-torchfly
+  loop_interval: 60
+  task_duration: 60
