@@ -24,9 +24,9 @@ In the next week, we plan to:
 In this week, we 
 * implement the distributed file system and build the demo
 * preprocess the dataset
-* combine the call back system and the training framework
+* implement the call back system based on the training framework
 
 
 In the next week, we plan to:
-* implement the call back system based on the training framework
+* continue to implement the call back system based on the training framework
 * build the preemption handler
