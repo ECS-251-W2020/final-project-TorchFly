@@ -10,6 +10,9 @@ def get_cpu_state_dict(states: OrderedDict) -> OrderedDict:
 
 @ray.remote
 def _async_save(states, filename):
+    for k in states:
+        states[k] = torch.from_numpy(states[k])
+        
     torch.save(states, filename)
     return 0
 
