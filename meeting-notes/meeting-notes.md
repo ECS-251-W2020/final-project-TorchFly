@@ -30,3 +30,10 @@ In this week, we
 In the next week, we plan to:
 * continue to implement the call back system based on the training framework
 * build the preemption handler
+
+## Week 4
+
+In this week,
+* Set up Google Cloud Storage
+
+
