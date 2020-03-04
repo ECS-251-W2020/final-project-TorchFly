@@ -35,5 +35,12 @@ In the next week, we plan to:
 
 In this week,
 * Set up Google Cloud Storage
+* Complete implementing the handler and call back system
+* Simulated experiments for comparing I/O speed on our distributed file system and other public ones
+* Start training BERT on google cloud
+
+In the next week, we plan to:
+* Finish training BERT and get the final result (actual reduction for training such a large language model)
+* Prepare for the final presentation
 
 
