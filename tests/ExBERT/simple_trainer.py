@@ -41,9 +41,16 @@ class SimpleTrainer():
             "steps_trained_in_current_epoch": 0,
         }
 
+
+    def update_progress_states(self):
+        "update self.progress_states according to checkpoint"
+        pass
+
     def fit(self):
+
+        self.update_progress_states()
         
-        for _ in range( self.config.num_epochs ):
+        for _ in range(  self.progress_states['epochs_trained'], self.config.num_epochs ):
             self.train_epoch()
 
 
@@ -62,12 +69,19 @@ class SimpleTrainer():
 
         # backward loss
         if self.config.distributed:
-            with amp.scale_loss(loss, optimizer) as scaled_loss:
+            with amp.scale_loss(loss, self.optimizer) as scaled_loss:
                 scaled_loss.backward()
         else:
             loss.backward()
 
     def train_epoch(self):
-   
+
+        count = 0 
+        self.optimizer.zero_grad()
+
         for data in self.dataloader:
+            count += 1        
             self.train_iter(data)
+            if count % self.config.gradient_accumulation_steps == 0:
+                self.optimizer.step()
+                self.zero_grad()

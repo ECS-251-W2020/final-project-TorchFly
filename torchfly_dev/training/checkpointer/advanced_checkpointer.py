@@ -27,6 +27,7 @@ class My_list():
             self.temp_list.append(x)
             self.time_list.append(t)
             out = None
+
         else:    
             
             how_long = t - self.time_list[0]
