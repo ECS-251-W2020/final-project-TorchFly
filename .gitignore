@@ -9,6 +9,7 @@ data
 *.db
 # log files
 *.log
+outputs
 # pickle and torch files
 *.pth
 *.th

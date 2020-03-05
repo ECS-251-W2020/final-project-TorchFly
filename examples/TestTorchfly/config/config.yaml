@@ -1,0 +1,11 @@
+training:
+    num_gpus: 1 
+    fp16: true
+    fp16_opt_level: "O1" # O0 to disable fp16
+    learning_rate: 1e-5
+    gradient_accumulation_steps: 1
+    max_grad_norm: 1.0 # disabled if negative
+    optimizer: "AdamW"
+    batch_size: 32
+    total_num_epochs: 10
+    log_interval: 10
