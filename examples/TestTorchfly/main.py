@@ -18,9 +18,7 @@ def main(config=None):
     # set data loader
     train_loader, test_loader = get_data_loader(config)
     model = CNNNet(config)
-
     trainer = Trainer(config=config, model=model, train_loader=train_loader, validation_loader=test_loader)
-    
     trainer.train()
 
 if __name__ == "__main__":

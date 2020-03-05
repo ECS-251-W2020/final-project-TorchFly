@@ -19,6 +19,7 @@ from model import FlyModule
 
 logger = logging.getLogger(__name__)
 
+
 class Trainer:
     def __init__(
         self,
@@ -71,15 +72,24 @@ class Trainer:
         self._master = config.training.rank <= 0
         self._total_num_epochs = config.training.total_num_epochs
         self._tensorboard = SummaryWriter(log_dir=os.getcwd())
-        
 
         # local variables
         self._global_count = 0
         self._epochs_trained = 0
 
         if config.training.fp16:
-            self.model, self.optimizer = amp.initialize(self.model, self.optimizer, opt_level=config.training.fp16_opt_level)
+            self.model, self.optimizer = amp.initialize(
+                self.model, self.optimizer, opt_level=config.training.fp16_opt_level
+            )
 
+        # Logging
+        self._log_in_seconds = False
+        if self.config.training.log_iterations_interval <= 0:
+            if self.config.training.log_seconds_interval is None:
+                # default log_iterations_interval
+                self.config.training.log_iterations_interval = 10
+            else:
+                self._log_in_seconds = True
 
     def train(self) -> Dict[str, Any]:
         logger.info("Starting Training.")
@@ -120,6 +130,9 @@ class Trainer:
             logger.info("Epoch %d/%d", epoch + 1, self._total_num_epochs)
             logger.info("Training")
 
+        if self._master and self._log_in_seconds:
+            iter_start_time = time.time()
+
         for batch_idx, batch in enumerate(self.train_loader):
             batch = move_to_device(batch, self.device)
             results = self._train_iter(batch)
@@ -132,17 +145,6 @@ class Trainer:
                 self.scheduler.step()
                 self.optimizer.zero_grad()
 
-            if self._master and self._global_count % self.config.training.log_interval == (
-                self.config.training.log_interval - 1
-            ):
-                _loss = results['loss'].item()
-                percent = 100. * batch_idx / len(self.train_loader)
-                logger.info(
-                    f"Train Epoch: {epoch} [{epoch+1}/{self._total_num_epochs} ({percent:.2f}%)]\tLoss: {_loss:.6f}"
-                )
-                if self._tensorboard:
-                    self._tensorboard.add_scalar("loss", _loss, self._global_count + 1)
-
             if self._master and self._global_count % self.config.training.save_checkpoint_interval == (
                 self.config.training.save_checkpoint_interval - 1
             ):
@@ -150,11 +152,24 @@ class Trainer:
 
             if self.validation_loader is not None and self._master and self._global_count % self.config.training.validation_interval == (
                 self.config.training.validation_interval - 1
-            ):  
+            ):
                 self.validate()
 
-            self._global_count += 1
+            # Logging
+            if self._master:
+                if self._log_in_seconds:
+                    current_time = time.time()
+                    iter_elapsed_time = current_time - iter_start_time
 
+                    if iter_elapsed_time > self.config.training.log_seconds_interval:
+                        self._log_iteration(batch_idx, results)
+                        iter_start_time = current_time
+                else:
+                    if self._global_count % self.config.training.log_iterations_interval == (
+                        self.config.training.log_iterations_interval - 1
+                    ):
+                        self._log_iteration(batch_idx, results)
+            self._global_count += 1
         return 0
 
     def _train_iter(self, batch: Dict[str, torch.Tensor]) -> Dict[str, Any]:
@@ -189,3 +204,13 @@ class Trainer:
 
     def _save_checkpoint(self) -> None:
         pass
+
+    def _log_iteration(self, batch_idx, results):
+        _loss = results['loss'].item()
+        percent = 100. * batch_idx / len(self.train_loader)
+        logger.info(
+            f"Train Epoch: {self._epochs_trained+1} [{self._epochs_trained+1}/{self._total_num_epochs} ({percent:.2f}%)]\tLoss: {_loss:.6f}"
+        )
+
+        if self._tensorboard:
+            self._tensorboard.add_scalar("loss", _loss, self._global_count + 1)
