@@ -6,6 +6,7 @@ training:
     gradient_accumulation_steps: 1
     max_grad_norm: 1.0 # disabled if negative
     optimizer: "AdamW"
+    num_epoches: 1
 exbert:
     gradient_checkpointing: false
     persistent_mem_size: 64
