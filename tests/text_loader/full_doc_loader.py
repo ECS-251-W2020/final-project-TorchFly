@@ -47,7 +47,10 @@ class FullDocLoader:
 
         if "OMP_NUM_THREADS" not in os.environ.keys():
             os.environ["OMP_NUM_THREADS"] = str(os.cpu_count() // 2)
-
+            self.num_threads = os.cpu_count() // 2
+        else:
+            self.num_threads = int(os.environ["OMP_NUM_THREADS"])
+            
     def load_sector(self, sector_id):
         if self.cache_dir:
 
@@ -72,7 +75,7 @@ class FullDocLoader:
 
         # multi-processing
         ray_objs = []
-        step_size = len(data) // int(os.environ["OMP_NUM_THREADS"])
+        step_size = len(data) // self.num_threads
         for i in range(0, len(data), step_size):
             ray_objs.append(_process.remote(self.tokenizer, data[i:i + step_size], i))
 

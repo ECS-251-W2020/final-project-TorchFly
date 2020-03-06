@@ -1,6 +1,6 @@
 FROM nvcr.io/nvidia/pytorch:20.01-py3
 
-RUN pip install ray hydra-core
+RUN pip install ray hydra-core transformers
 
 EXPOSE 80
 

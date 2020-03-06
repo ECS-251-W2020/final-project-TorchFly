@@ -20,6 +20,20 @@ from model import FlyModule
 logger = logging.getLogger(__name__)
 
 
+class MovingAverage:
+    def __init__(self, init_dict=None, decay=0.9):
+        self.history_dict = init_dict if init_dict else {}
+        self.decay = decay
+
+    def update_key(self, key, value):
+        if key in self.history_dict:
+            self.history_dict[key] = self.decay * self.history_dict[key] + (1 - self.decay) * value
+        else:
+            self.history_dict[key] = value
+
+        return self.history_dict[key]
+
+
 class Trainer:
     def __init__(
         self,
@@ -31,6 +45,7 @@ class Trainer:
     ):
         self.config = config
         self.device = torch.device("cuda")
+        self.moving_average = MovingAverage()
 
         # Reproducibility
         if hasattr(self.config.training, "random_seed") and self.config.training.random_seed:
@@ -206,10 +221,12 @@ class Trainer:
         pass
 
     def _log_iteration(self, batch_idx, results):
+
         _loss = results['loss'].item()
+        avg_loss = self.moving_average.update_key("loss", _loss)
         percent = 100. * batch_idx / len(self.train_loader)
         logger.info(
-            f"Train Epoch: {self._epochs_trained+1} [{self._epochs_trained+1}/{self._total_num_epochs} ({percent:.2f}%)]\tLoss: {_loss:.6f}"
+            f"Train Epoch: {self._epochs_trained+1} [{self._epochs_trained+1}/{self._total_num_epochs} ({percent:.2f}%)]\tLoss: {avg_loss:.6f}"
         )
 
         if self._tensorboard:
