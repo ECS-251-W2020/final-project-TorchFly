@@ -30,7 +30,6 @@ class MovingAverage:
             self.history_dict[key] = self.decay * self.history_dict[key] + (1 - self.decay) * value
         else:
             self.history_dict[key] = value
-
         return self.history_dict[key]
 
 
