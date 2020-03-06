@@ -219,8 +219,12 @@ class Trainer:
     def _save_checkpoint(self) -> None:
         pass
 
-    def _log_iteration(self, batch_idx, results):
-
+    def _log_iteration(self, batch_idx, results: Dict[str, torch.Tensor]):
+        """
+        Args:
+           batch_idx: 
+           results:
+        """
         _loss = results['loss'].item()
         avg_loss = self.moving_average.update_key("loss", _loss)
         percent = 100. * batch_idx / len(self.train_loader)
