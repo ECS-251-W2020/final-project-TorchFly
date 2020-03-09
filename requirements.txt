@@ -1,4 +1,10 @@
+# new
 hydra-colorlog
+colorlog==4.1.0
+#### old
 regex
+pytorch
+hydra-core
+transformers
 # google drive download
 gdown
