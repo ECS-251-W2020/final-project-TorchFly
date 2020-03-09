@@ -29,6 +29,7 @@ from checkpointer import Checkpointer
 
 logger = logging.getLogger(__name__)
 
+
 class MovingAverage:
     def __init__(self, init_dict=None, decay=0.9):
         self.history_dict = init_dict if init_dict else {}
@@ -40,6 +41,7 @@ class MovingAverage:
         else:
             self.history_dict[key] = value
         return self.history_dict[key]
+
 
 class Trainer:
     def __init__(
@@ -124,10 +126,55 @@ class Trainer:
         logger.info(self.config.pretty())
 
     def __single_gpu_train(self):
-        self.__set_random_seed(self.config.training.random_seed)
+        self.__rank = 0
+        self.__master = True
         self.__device = torch.device("cuda")
 
-    def _distributed_train(self, rank):
+        if self.__master:
+            configure_logging(self.config)
+            logger.info(ray.init())
+            self.__tensorboard = SummaryWriter(log_dir=os.getcwd())
+
+        # Reproducibility
+        if self.config.training.random_seed:
+            self.__set_random_seed(self.config.training.random_seed)
+
+        if self.__master:
+            configure_logging(self.config)
+            logger.info(ray.init())
+            self.__tensorboard = SummaryWriter(log_dir=os.getcwd())
+
+        # To Device
+        self.model = move_to_device(self.model, self.__device)
+
+        # FP16
+        if self.config.training.fp16:
+            self.model, self.optimizer = amp.initialize(
+                self.model, self.optimizer, opt_level=self.config.training.fp16_opt_level
+            )
+
+        # Scheduler
+        self.scheduler = self.configure_scheduler()
+
+        # Resume the training
+        if self.__cache_states is not None:
+            self.load_state_dict(self.__cache_states)
+            logger.info(f"Loaded the saved checkpoint {self.__cache_states['file_path']}")
+        else:
+            logger.info("Not loading any checkpoint. Training from scratch!")
+
+        if self.__master:
+            logger.info("Starting Training.")
+            if self.__log_in_seconds:
+                self.__log_iter_start_time = time.time()
+            if self.__save_in_seconds:
+                self.__save_iter_start_time = time.time()
+
+        epoch_results = self.__train()
+
+        return epoch_results
+
+    def _distributed_train(self, rank=0):
         """
         Handles the distributed training on a single node.
 
@@ -185,23 +232,25 @@ class Trainer:
 
         torch.distributed.barrier()
 
+        epoch_results = self.__train()
+
+        return None
+
+    def __train(self):
         # training loop
         for epoch in range(self.__epochs_trained, self.__total_num_epochs):
             if self.__master:
                 epoch_start_time = time.time()
-
             epoch_results = self.__train_epoch(epoch)
-
             if self.__master:
                 epoch_elapsed_time = time.time() - epoch_start_time
                 logger.info("Epoch duration: %s", datetime.timedelta(seconds=epoch_elapsed_time))
-
             self.__epochs_trained += 1
 
         if self.__master:
             self.__tensorboard.close()
 
-        return None
+        return epoch_results
 
     def train(self) -> Dict[str, Any]:
         if self.config.training.num_gpus_per_node > 1:
