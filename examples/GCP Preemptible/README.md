@@ -83,3 +83,6 @@ gcloud compute instances delete torchfly
 gcloud compute instances describe qywu-torchfly
 
 gcloud compute instances start qywu-torchfly
+
+
+https://docs.nvidia.com/ngc/ngc-gcp-vmi-release-notes/index.html

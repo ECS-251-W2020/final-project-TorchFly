@@ -4,7 +4,7 @@ defaults:
 training:
     # reproduce
     random_seed: 1
-    num_gpus_per_node: 2
+    num_gpus_per_node: 1
     # Mixed Precision
     fp16: true
     fp16_opt_level: "O1" # O0 to disable fp16
@@ -15,6 +15,7 @@ training:
     optimizer: "AdamW"
     batch_size: 32
     total_num_epochs: 10
+    total_num_iterations: 10 # disabled when total_num_epochs > 0
 saving:
     # when saving.iterations_interval and saving.seconds_interval
     # are both negative, save the models for every epoch
@@ -26,6 +27,6 @@ saving:
     resume_mode: true
 logging:
     color: true
-    level: "DEBUG"    
+    level: "DEBUG"
     iterations_interval: -1 # disabled when negative
     seconds_interval: 1 # disabled when `log_iterations_interval` is set

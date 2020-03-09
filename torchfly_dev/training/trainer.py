@@ -12,6 +12,7 @@ from apex import amp
 import numpy as np
 import random
 import torch
+import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from torch.optim.lr_scheduler import LambdaLR
 from torch.optim import Optimizer
@@ -21,11 +22,9 @@ from apex.parallel import DistributedDataParallel, Reducer
 # from torch.nn.parallel import DistributedDataParallel
 from hydra.utils import get_original_cwd
 
-from torchfly_dev.training.optimization import ConstantLRSchedule
-from torchfly_dev.utils import move_to_device, configure_logging
-
-from model import FlyModule
-from checkpointer import Checkpointer
+from .checkpointer import Checkpointer
+from .optimization import ConstantLRSchedule
+from ..utils import move_to_device, configure_logging
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +46,7 @@ class Trainer:
     def __init__(
         self,
         config: DictConfig,
-        model: FlyModule = None,
+        model: nn.Module = None,
         train_loader: Iterator = None,
         validation_loader: Iterator = None,
         test_loader: Iterator = None
@@ -57,17 +56,18 @@ class Trainer:
         """
         self.config = config
         self.moving_average = MovingAverage()
-        self.__setup_configuration()
 
         # # Data Loading
         self.train_loader = train_loader
         self.validation_loader = validation_loader
         self.test_loader = test_loader
 
+        self.__setup_configuration()
+
         # local variables
         self.__global_count = 0
         self.__epochs_trained = 0
-        self.__total_num_epochs = config.training.total_num_epochs
+        self.__count_in_epoch = 0
 
         # setup model
         if model is None:
@@ -92,6 +92,18 @@ class Trainer:
             self.__cache_states = self.__restore_checkpoint()
 
     def __setup_configuration(self):
+        # Set Num of Epochs and Num of Iterations
+        # if the num of epochs is set 
+        if self.config.training.total_num_epochs > 0:   
+            self.__total_num_iterations = len(self.train_loader) * self.config.training.total_num_epochs // self.config.training.num_gpus_per_node
+            self.__total_num_epochs = self.config.training.total_num_epochs
+        # num of epochs is not set
+        else:
+            if self.config.training.total_num_iterations is None:
+                raise NotImplementedError("Please specify the `total_num_epochs` or `total_num_iterations`!")
+            else:
+               self.__total_num_epochs = self.__total_num_iterations * self.config.training.num_gpus_per_node // len(self.train_loader)
+
         # if self.config.training.validation_interval is None:
         #     # save for every epoch
         #     self.config.training.validation_interval = len(self.train_loader) - 1
@@ -129,46 +141,7 @@ class Trainer:
         self.__rank = 0
         self.__master = True
         self.__device = torch.device("cuda")
-
-        if self.__master:
-            configure_logging(self.config)
-            logger.info(ray.init())
-            self.__tensorboard = SummaryWriter(log_dir=os.getcwd())
-
-        # Reproducibility
-        if self.config.training.random_seed:
-            self.__set_random_seed(self.config.training.random_seed)
-
-        if self.__master:
-            configure_logging(self.config)
-            logger.info(ray.init())
-            self.__tensorboard = SummaryWriter(log_dir=os.getcwd())
-
-        # To Device
-        self.model = move_to_device(self.model, self.__device)
-
-        # FP16
-        if self.config.training.fp16:
-            self.model, self.optimizer = amp.initialize(
-                self.model, self.optimizer, opt_level=self.config.training.fp16_opt_level
-            )
-
-        # Scheduler
-        self.scheduler = self.configure_scheduler()
-
-        # Resume the training
-        if self.__cache_states is not None:
-            self.load_state_dict(self.__cache_states)
-            logger.info(f"Loaded the saved checkpoint {self.__cache_states['file_path']}")
-        else:
-            logger.info("Not loading any checkpoint. Training from scratch!")
-
-        if self.__master:
-            logger.info("Starting Training.")
-            if self.__log_in_seconds:
-                self.__log_iter_start_time = time.time()
-            if self.__save_in_seconds:
-                self.__save_iter_start_time = time.time()
+        self.__setup_training()
 
         epoch_results = self.__train()
 
@@ -187,19 +160,30 @@ class Trainer:
         self.__device = torch.device("cuda", self.__rank)
         self.config.training.rank = rank
 
-        if self.__master:
-            configure_logging(self.config)
-            logger.info(ray.init())
-            self.__tensorboard = SummaryWriter(log_dir=os.getcwd())
-
         # init distributed
         torch.distributed.init_process_group(
             backend="nccl", rank=self.__rank, world_size=self.config.training.num_gpus_per_node
         )
 
+        self.__setup_training()
+
+        # Distributed training (should be after apex fp16 initialization)
+        self.model = DistributedDataParallel(self.model)
+
+        epoch_results = self.__train()
+
+        return None
+
+    def __setup_training(self) -> None:
+        if self.__master:
+            if self.config.training.num_gpus_per_node > 1:
+                configure_logging(self.config)
+            logger.info(ray.init())
+            self.__tensorboard = SummaryWriter(log_dir=os.getcwd())
+
         # Reproducibility
         if self.config.training.random_seed:
-            self.__set_random_seed(rank + self.config.training.random_seed)
+            self.__set_random_seed(self.__rank + self.config.training.random_seed)
 
         # To Device
         self.model = move_to_device(self.model, self.__device)
@@ -220,37 +204,87 @@ class Trainer:
         else:
             logger.info("Not loading any checkpoint. Training from scratch!")
 
-        # Distributed training (should be after apex fp16 initialization)
-        self.model = DistributedDataParallel(self.model)
-
+    def __train(self):
         if self.__master:
             logger.info("Starting Training.")
             if self.__log_in_seconds:
                 self.__log_iter_start_time = time.time()
             if self.__save_in_seconds:
                 self.__save_iter_start_time = time.time()
+            epoch_start_time = time.time()
 
-        torch.distributed.barrier()
+        if self.__master:
+            if self.__count_in_epoch > 0:
+                logger.info("Resume the training!")
 
-        epoch_results = self.__train()
-
-        return None
-
-    def __train(self):
-        # training loop
-        for epoch in range(self.__epochs_trained, self.__total_num_epochs):
+        for _ in range(self.__global_count, self.__total_num_iterations):
             if self.__master:
-                epoch_start_time = time.time()
-            epoch_results = self.__train_epoch(epoch)
+                if self.__count_in_epoch == 0:
+                    logger.info("Epoch %d/%d", self.__epochs_trained + 1, self.__total_num_epochs)
+                    epoch_start_time = time.time()
+
+            # The state should be perserved by torch.get_rng_state
+            # However, this solution is not deterministic, but at least it ensures
+            # the randomness when loading data 
+            batch = next(self.train_loader)
+
+            batch = move_to_device(batch, self.__device)
+            results = self.__train_iter(batch)
+
+            # Update the model
+            if self.__global_count % self.config.training.gradient_accumulation_steps == (
+                self.config.training.gradient_accumulation_steps - 1
+            ):
+                self.optimizer.step()
+                self.scheduler.step()
+                self.optimizer.zero_grad()
+
+            # Checkpointing
             if self.__master:
-                epoch_elapsed_time = time.time() - epoch_start_time
-                logger.info("Epoch duration: %s", datetime.timedelta(seconds=epoch_elapsed_time))
-            self.__epochs_trained += 1
+                if self.__save_in_seconds:
+                    current_time = time.time()
+                    iter_elapsed_time = current_time - self.__save_iter_start_time
+
+                    if iter_elapsed_time > self.config.saving.seconds_interval:
+                        self.__save_checkpoint()
+                        self.__save_iter_start_time = current_time
+                else:
+                    if self.__global_count % self.config.saving.iterations_interval == (
+                        self.config.saving.iterations_interval - 1
+                    ):
+                        self.__save_checkpoint()
+
+            # Logging
+            if self.__master:
+                if self.__log_in_seconds:
+                    current_time = time.time()
+                    iter_elapsed_time = current_time - self.__log_iter_start_time
+
+                    if iter_elapsed_time > self.config.logging.seconds_interval:
+                        self.__log_iteration(self.__count_in_epoch, results)
+                        self.__log_iter_start_time = current_time
+                else:
+                    if self.__global_count % self.config.logging.iterations_interval == (
+                        self.config.logging.iterations_interval - 1
+                    ):
+                        self.__log_iteration(self.__count_in_epoch, results)
+
+            self.__count_in_epoch += 1
+            self.__global_count += 1
+
+            # reset the counters
+            if self.__count_in_epoch == len(self.train_loader):
+                self.__epochs_trained += 1
+                self.__count_in_epoch = 0
+
+                if self.__master:
+                    epoch_elapsed_time = time.time() - epoch_start_time
+                    logger.info("Epoch duration: %s", datetime.timedelta(seconds=epoch_elapsed_time))
 
         if self.__master:
             self.__tensorboard.close()
 
-        return epoch_results
+        return {}
 
     def train(self) -> Dict[str, Any]:
         if self.config.training.num_gpus_per_node > 1:
@@ -300,9 +334,17 @@ class Trainer:
         self.model.train()
 
         if self.__master:
+            if self.__count_in_epoch > 0:
+                logger.info("Resume the training!")
             logger.info("Epoch %d/%d", epoch + 1, self.__total_num_epochs)
 
         for batch_idx, batch in enumerate(self.train_loader):
+            # Resume the training
+            if self.__count_in_epoch > batch_idx:
+                continue
+            else:
+                self.__count_in_epoch = batch_idx
+
             batch = move_to_device(batch, self.__device)
             results = self.__train_iter(batch)
 
@@ -348,11 +390,13 @@ class Trainer:
 
             # Validation
             # if self._master:
-            #     if self.validation_loader is not None and  and self._global_count % self.config.training.validation_interval == (
+            #     if self.validation_loader is not None and self._global_count % self.config.training.validation_interval == (
             #         self.config.training.validation_interval - 1
             #     ):
             #         self.validate()
 
+        # reset the counter
+        self.__count_in_epoch = 0
         return 0
 
     def validate(self):
@@ -364,7 +408,7 @@ class Trainer:
     def configure_scheduler(self) -> LambdaLR:
         return ConstantLRSchedule(self.optimizer)
 
-    def configure_model(self) -> FlyModule:
+    def configure_model(self) -> nn.Module:
         raise NotImplementedError
 
     def __save_checkpoint(self) -> None:
@@ -377,6 +421,9 @@ class Trainer:
         return states
 
     def state_dict(self):
+        # TODO: add error handling for saving and loading rng states and amp states
+        # which can simply be loading the first device's rng states
+
         if self.config.training.num_gpus_per_node > 1:
             model_states = self.model.module.state_dict()
         else:
@@ -384,10 +431,13 @@ class Trainer:
         states = {
             "epoch": self.__epochs_trained,
             "iteration": self.__global_count,
+            "iteration_in_epoch": self.__count_in_epoch,
             "model_states": model_states,
             "optimizer_states": self.optimizer.state_dict(),
             "scheduler_states": self.scheduler.state_dict(),
             "checkpointer_states": self.checkpointer.state_dict(),
+            "cpu_rng_states": torch.get_rng_state(),
+            "cuda_rng_states": torch.cuda.get_rng_state_all(),
         }
         # save amp states
         if self.config.training.fp16:
@@ -397,10 +447,15 @@ class Trainer:
     def load_state_dict(self, states: Dict[str, Any]):
         self.__epochs_trained = states["epoch"]
         self.__global_count = states["iteration"]
+        self.__count_in_epoch = states["iteration_in_epoch"]
         self.model.load_state_dict(states["model_states"])
         self.optimizer.load_state_dict(states["optimizer_states"])
         self.scheduler.load_state_dict(states["scheduler_states"])
         self.checkpointer.load_state_dict(states["checkpointer_states"])
+        
+        torch.set_rng_state(states["cpu_rng_states"])
+        torch.cuda.set_rng_state_all(states["cuda_rng_states"])
+
         # restore amp states
         if self.config.training.fp16:
             amp.load_state_dict(states["amp"])
@@ -421,10 +476,10 @@ class Trainer:
         """
         _loss = results['loss'].item()
         avg_loss = self.moving_average.update_key("loss", _loss)
-        percent = 100. * batch_idx / len(self.train_loader)
+        percent = 100. * self.__count_in_epoch / len(self.train_loader)
         logger.info(
-            f"Train Epoch: {self.__epochs_trained+1} \
-                [{self.__epochs_trained+1}/{self.__total_num_epochs} ({percent:.2f}%)]\tLoss: {avg_loss:.6f}"
+            f"Train Epoch: [{self.__epochs_trained+1}/{self.__total_num_epochs}]"
+            f" [{percent:7.4f}%]    Loss: {avg_loss:8.6f}"
         )
 
         if self.__tensorboard:

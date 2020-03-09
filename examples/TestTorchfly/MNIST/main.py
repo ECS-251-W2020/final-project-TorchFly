@@ -8,8 +8,9 @@ import numpy as np
 import torch
 from torchvision import datasets, transforms
 
+from torchfly_dev.training import Trainer
+
 from model import CNNNet
-from trainer import Trainer
 from dataloader import get_data_loader
 
 logger = logging.getLogger(__name__)
@@ -24,8 +25,6 @@ def main(config=None):
     trainer.train()
     breakpoint()
 
+
 if __name__ == "__main__":
     main()
-
-
-

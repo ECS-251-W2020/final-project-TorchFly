@@ -5,6 +5,12 @@ import numpy as np
 import torch
 from torchvision import datasets, transforms
 
+def get_cwd():
+    try:
+        return get_original_cwd()
+    except AttributeError:
+        return os.getcwd()
+
 class WarpDataloader(torch.utils.data.DataLoader):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -23,7 +29,7 @@ class WarpDataloader(torch.utils.data.DataLoader):
 def get_data_loader(config):
     kwargs = {'num_workers': 0, 'pin_memory': True}
     train_loader = WarpDataloader(
-        datasets.MNIST(os.path.join(get_original_cwd(), 'data'), train=True, download=True,
+        datasets.MNIST(os.path.join(get_cwd(), 'data'), train=True, download=True,
                     transform=transforms.Compose([
                         transforms.ToTensor(),
                         transforms.Normalize((0.1307,), (0.3081,))
@@ -31,7 +37,7 @@ def get_data_loader(config):
         batch_size=config.training.batch_size, shuffle=True, **kwargs)
 
     test_loader = torch.utils.data.DataLoader(
-    datasets.MNIST(os.path.join(get_original_cwd(), 'data'), train=False, transform=transforms.Compose([
+    datasets.MNIST(os.path.join(get_cwd(), 'data'), train=False, transform=transforms.Compose([
                         transforms.ToTensor(),
                         transforms.Normalize((0.1307,), (0.3081,))
                     ])),
