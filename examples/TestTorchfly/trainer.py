@@ -1,4 +1,5 @@
 import os
+import ray
 import math
 import time
 import datetime
@@ -12,12 +13,27 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 from torch.optim.lr_scheduler import LambdaLR
 from torch.optim import Optimizer
+from hydra.utils import get_original_cwd
 
 from torchfly_dev.training.optimization import ConstantLRSchedule
 from torchfly_dev.utils import move_to_device
+
 from model import FlyModule
+from checkpointer import Checkpointer
 
 logger = logging.getLogger(__name__)
+
+
+def get_cwd(resume_mode):
+    if resume_mode:
+        try:
+            result = get_original_cwd()
+        except:
+            logger.info("hydra is not used in resume mode. Using `os.getcwd` instead")
+            result = os.getcwd()
+        return result
+    else:
+        return os.getcwd()
 
 
 class MovingAverage:
@@ -33,6 +49,9 @@ class MovingAverage:
         return self.history_dict[key]
 
 
+logger.info(ray.init())
+
+
 class Trainer:
     def __init__(
         self,
@@ -46,14 +65,6 @@ class Trainer:
         self.device = torch.device("cuda")
         self.moving_average = MovingAverage()
 
-        # Reproducibility
-        if hasattr(self.config.training, "random_seed") and self.config.training.random_seed:
-            random.seed(self.config.training.random_seed)
-            np.random.seed(self.config.training.random_seed)
-            torch.manual_seed(self.config.training.random_seed)
-            torch.backends.cudnn.deterministic = True
-            # torch.backends.cudnn.benchmark = False
-
         # Data Loading
         self.train_loader = train_loader
         self.validation_loader = validation_loader
@@ -61,11 +72,6 @@ class Trainer:
 
         # Distributed Training
         config.training.rank = -1
-
-        # Checkpointer
-        if self.config.training.save_checkpoint_interval is None:
-            # save for every epoch
-            self.config.training.save_checkpoint_interval = len(self.train_loader) - 1
 
         if self.config.training.validation_interval is None:
             # save for every epoch
@@ -78,9 +84,7 @@ class Trainer:
             self.model = model
         # move to device
         self.model = move_to_device(self.model, self.device)
-
         self.optimizer = self.configure_optimizer()
-        self.scheduler = self.configure_scheduler()
 
         # local
         self._master = config.training.rank <= 0
@@ -96,24 +100,54 @@ class Trainer:
                 self.model, self.optimizer, opt_level=config.training.fp16_opt_level
             )
 
+        # set up the cheduler
+        self.scheduler = self.configure_scheduler()
+
         # Logging
         self._log_in_seconds = False
         if self.config.training.log_iterations_interval <= 0:
-            if self.config.training.log_seconds_interval is None:
+            if self.config.training.log_seconds_interval is None or self.config.training.log_seconds_interval < 0:
                 # default log_iterations_interval
                 self.config.training.log_iterations_interval = 10
             else:
                 self._log_in_seconds = True
 
+        # Checkpointer
+        self._save_in_seconds = False
+
+        self.checkpointer = Checkpointer(
+            sync_every_save=True,
+            num_checkpoints_to_keep=config.training.num_checkpoints_to_keep,
+            keep_checkpoint_every_num_seconds=config.training.keep_checkpoint_every_num_seconds,
+            storage_dir=os.path.join(get_cwd(config.training.resume_mode), "Checkpoints")
+        )
+
+        # if nothign about saving interval is set
+        if (
+            self.config.training.save_iterations_interval is None and self.config.training.save_seconds_interval is None
+        ) or (self.config.training.save_iterations_interval < 0 and self.config.training.save_seconds_interval < 0):
+            # then save for every epoch
+            self.config.training.save_iterations_interval = len(self.train_loader) - 1
+
+        # if self.config.training.save_seconds_interval is set
+        if self.config.training.save_iterations_interval < 0 and self.config.training.save_seconds_interval > 0:
+            self._save_in_seconds = True
+
+        # Resume the training
+        # find the any checkpoint
+        if self.config.training.resume_mode:
+            self._restore_checkpoint()
+
+        if self._master:
+            logger.info(ray.init())
+
     def train(self) -> Dict[str, Any]:
         logger.info("Starting Training.")
-
-        # Resume previous training
-        # try:
-        #     self.epochs_trained = 0
-        # except:
-        #     logger.info("Could not recover training")
-        #     pass
+        if self._master:
+            if self._log_in_seconds:
+                self._log_iter_start_time = time.time()
+            if self._save_in_seconds:
+                self._save_iter_start_time = time.time()
 
         # training loop
         for epoch in range(self._epochs_trained, self._total_num_epochs):
@@ -144,14 +178,11 @@ class Trainer:
             logger.info("Epoch %d/%d", epoch + 1, self._total_num_epochs)
             logger.info("Training")
 
-        if self._master and self._log_in_seconds:
-            iter_start_time = time.time()
-
         for batch_idx, batch in enumerate(self.train_loader):
             batch = move_to_device(batch, self.device)
             results = self._train_iter(batch)
 
-            # update the model
+            # Update the model
             if self._global_count % self.config.training.gradient_accumulation_steps == (
                 self.config.training.gradient_accumulation_steps - 1
             ):
@@ -159,31 +190,44 @@ class Trainer:
                 self.scheduler.step()
                 self.optimizer.zero_grad()
 
-            if self._master and self._global_count % self.config.training.save_checkpoint_interval == (
-                self.config.training.save_checkpoint_interval - 1
-            ):
-                self._save_checkpoint()
+            # Checkpointing
+            if self._master:
+                if self._save_in_seconds:
+                    current_time = time.time()
+                    iter_elapsed_time = current_time - self._save_iter_start_time
 
-            if self.validation_loader is not None and self._master and self._global_count % self.config.training.validation_interval == (
-                self.config.training.validation_interval - 1
-            ):
-                self.validate()
+                    if iter_elapsed_time > self.config.training.save_seconds_interval:
+                        self._save_checkpoint()
+                        self._save_iter_start_time = current_time
+                else:
+                    if self._global_count % self.config.training.save_iterations_interval == (
+                        self.config.training.save_iterations_interval - 1
+                    ):
+                        self._save_checkpoint()
 
             # Logging
             if self._master:
                 if self._log_in_seconds:
                     current_time = time.time()
-                    iter_elapsed_time = current_time - iter_start_time
+                    iter_elapsed_time = current_time - self._log_iter_start_time
 
                     if iter_elapsed_time > self.config.training.log_seconds_interval:
                         self._log_iteration(batch_idx, results)
-                        iter_start_time = current_time
+                        self._log_iter_start_time = current_time
                 else:
                     if self._global_count % self.config.training.log_iterations_interval == (
                         self.config.training.log_iterations_interval - 1
                     ):
                         self._log_iteration(batch_idx, results)
             self._global_count += 1
+
+            # Validation
+            # if self._master:
+            #     if self.validation_loader is not None and  and self._global_count % self.config.training.validation_interval == (
+            #         self.config.training.validation_interval - 1
+            #     ):
+            #         self.validate()
+
         return 0
 
     def _train_iter(self, batch: Dict[str, torch.Tensor]) -> Dict[str, Any]:
@@ -213,11 +257,38 @@ class Trainer:
     def configure_model(self) -> FlyModule:
         raise NotImplementedError
 
-    def _restore_checkpoint(self):
-        pass
-
     def _save_checkpoint(self) -> None:
-        pass
+        states = {
+            "epoch": self._epochs_trained,
+            "iteration": self._global_count,
+            "model_states": self.model.state_dict(),
+            "optimizer_states": self.optimizer.state_dict(),
+            "scheduler_states": self.scheduler.state_dict(),
+            "checkpointer_states": self.checkpointer.state_dict(),
+        }
+        # use the current iteration number as the stamp
+        self.checkpointer.save_checkpoint("iter_" + str(self._global_count), states)
+
+    def _restore_checkpoint(self):
+        states = self.checkpointer.restore_latest_checkpoint()
+        if states is not None:
+            self._epochs_trained = states["epoch"]
+            self._global_count = states["iteration"]
+            self.model.load_state_dict(states["model_states"])
+            self.optimizer.load_state_dict(states["optimizer_states"])
+            self.scheduler.load_state_dict(states["scheduler_states"])
+            self.checkpointer.load_state_dict(states["checkpointer_states"])
+            logger.info("Loaded the latest checkpoint")
+        else:
+            logger.info("No checkpoint found. Training from scratch!")
+
+    def _set_random_seed(self, random_seed):
+        # Reproducibility
+        random.seed(random_seed)
+        np.random.seed(random_seed)
+        torch.manual_seed(random_seed)
+        torch.backends.cudnn.deterministic = True
+        # torch.backends.cudnn.benchmark = False
 
     def _log_iteration(self, batch_idx, results: Dict[str, torch.Tensor]):
         """

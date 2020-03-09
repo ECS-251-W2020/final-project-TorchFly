@@ -1,14 +1,23 @@
 training:
-    num_gpus: 1 
+    num_gpus: 1
+    # Mixed Precision
     fp16: true
     fp16_opt_level: "O1" # O0 to disable fp16
-    # optimization
+    # Optimization
     learning_rate: 1e-5
     gradient_accumulation_steps: 1
     max_grad_norm: 1.0 # disabled when negative
     optimizer: "AdamW"
     batch_size: 32
     total_num_epochs: 10
-    # logging
+    # Logging
     log_iterations_interval: -1 # disabled when negative
     log_seconds_interval: 1 # disabled when `log_iterations_interval` is set
+    # Model Saving
+    ## saving interval: when both negative, saving for every epoch
+    save_iterations_interval: -1
+    save_seconds_interval: 10
+    # Checkpointer
+    num_checkpoints_to_keep: 1
+    keep_checkpoint_every_num_seconds: 3600
+    resume_mode: true
