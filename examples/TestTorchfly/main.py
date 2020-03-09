@@ -22,6 +22,7 @@ def main(config=None):
     model = CNNNet(config)
     trainer = Trainer(config=config, model=model, train_loader=train_loader, validation_loader=test_loader)
     trainer.train()
+    breakpoint()
 
 if __name__ == "__main__":
     main()
