@@ -6,6 +6,7 @@ data
 *.json
 *.jsonl
 *.txt
+!requirements.txt
 *.db
 # log files
 *.log
