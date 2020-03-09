@@ -2,6 +2,7 @@ import os
 import sys
 import ray
 import math
+import signal
 import time
 import datetime
 import logging
@@ -16,8 +17,8 @@ from torch.optim.lr_scheduler import LambdaLR
 from torch.optim import Optimizer
 import torch.multiprocessing as multiprocessing
 import torch.distributed
-# from apex.parallel import DistributedDataParallel, Reducer
-from torch.nn.parallel import DistributedDataParallel
+from apex.parallel import DistributedDataParallel, Reducer
+# from torch.nn.parallel import DistributedDataParallel
 from hydra.utils import get_original_cwd
 
 from torchfly_dev.training.optimization import ConstantLRSchedule
@@ -27,7 +28,6 @@ from model import FlyModule
 from checkpointer import Checkpointer
 
 logger = logging.getLogger(__name__)
-
 
 class MovingAverage:
     def __init__(self, init_dict=None, decay=0.9):
@@ -40,7 +40,6 @@ class MovingAverage:
         else:
             self.history_dict[key] = value
         return self.history_dict[key]
-
 
 class Trainer:
     def __init__(
@@ -56,12 +55,7 @@ class Trainer:
         """
         self.config = config
         self.moving_average = MovingAverage()
-        # setup saving directory
-        if self.config.saving.resume_mode:
-            self.config.saving.save_dir = get_original_cwd()
-        else:
-            self.config.saving.save_dir = os.getcwd()
-        self.setup_configuration()
+        self.__setup_configuration()
 
         # # Data Loading
         self.train_loader = train_loader
@@ -79,23 +73,33 @@ class Trainer:
         else:
             self.model = model
 
+        # setup the scheduler
+        self.optimizer = self.configure_optimizer()
+
         # # Checkpointer
         self.checkpointer = Checkpointer(
             sync_every_save=True,
             num_checkpoints_to_keep=config.saving.num_checkpoints_to_keep,
             keep_checkpoint_every_num_seconds=config.saving.keep_checkpoint_every_num_seconds,
-            storage_dir=os.path.join(self.config.saving.save_dir, "Checkpoints")
+            storage_dir=self.config.saving.save_dir
         )
 
         # # Resume the training
         # # find the any checkpoint
         if self.config.saving.resume_mode:
-            self.__restore_checkpoint()
+            self.__cache_states = self.__restore_checkpoint()
 
-    def setup_configuration(self):
+    def __setup_configuration(self):
         # if self.config.training.validation_interval is None:
         #     # save for every epoch
         #     self.config.training.validation_interval = len(self.train_loader) - 1
+
+        # Saving directory
+        if self.config.saving.resume_mode:
+            self.config.saving.save_dir = get_original_cwd()
+        else:
+            self.config.saving.save_dir = os.getcwd()
+        self.config.saving.save_dir = os.path.join(self.config.saving.save_dir, "Checkpoints")
 
         # Logging
         self.__log_in_seconds = False
@@ -120,7 +124,7 @@ class Trainer:
         logger.info(self.config.pretty())
 
     def __single_gpu_train(self):
-        self.__set_random_seed(rank + self.config.training.random_seed)
+        self.__set_random_seed(self.config.training.random_seed)
         self.__device = torch.device("cuda")
 
     def _distributed_train(self, rank):
@@ -130,20 +134,15 @@ class Trainer:
         Args:
             rank: also the gpu index
         """
-        os.environ["RANK"] = str(rank)
-        os.environ["LOCAL_RANK"] = str(rank)
         self.__rank = rank
         self.__master = rank == 0
         torch.cuda.set_device(rank)
         self.__device = torch.device("cuda", self.__rank)
         self.config.training.rank = rank
 
-        # setup the scheduler
-        self.optimizer = self.configure_optimizer()
-
         if self.__master:
             configure_logging(self.config)
-            # logger.info(ray.init())
+            logger.info(ray.init())
             self.__tensorboard = SummaryWriter(log_dir=os.getcwd())
 
         # init distributed
@@ -164,15 +163,18 @@ class Trainer:
                 self.model, self.optimizer, opt_level=self.config.training.fp16_opt_level
             )
 
-        # Distributed training (should be after apex fp16 initialization)
-        # self.model = DistributedDataParallel(self.model)
-        self.model = DistributedDataParallel(
-            self.model, device_ids=[self.__rank], output_device=self.__rank, find_unused_parameters=True
-        )
-        # setup the cheduler
+        # Scheduler
         self.scheduler = self.configure_scheduler()
 
-        torch.distributed.barrier()
+        # Resume the training
+        if self.__cache_states is not None:
+            self.load_state_dict(self.__cache_states)
+            logger.info(f"Loaded the saved checkpoint {self.__cache_states['file_path']}")
+        else:
+            logger.info("Not loading any checkpoint. Training from scratch!")
+
+        # Distributed training (should be after apex fp16 initialization)
+        self.model = DistributedDataParallel(self.model)
 
         if self.__master:
             logger.info("Starting Training.")
@@ -180,6 +182,8 @@ class Trainer:
                 self.__log_iter_start_time = time.time()
             if self.__save_in_seconds:
                 self.__save_iter_start_time = time.time()
+
+        torch.distributed.barrier()
 
         # training loop
         for epoch in range(self.__epochs_trained, self.__total_num_epochs):
@@ -315,37 +319,42 @@ class Trainer:
         raise NotImplementedError
 
     def __save_checkpoint(self) -> None:
-        pass
-        # states = {
-        #     "epoch": self.__epochs_trained,
-        #     "iteration": self.__global_count,
-        #     "model_states": self.model.state_dict(),
-        #     "optimizer_states": self.optimizer.state_dict(),
-        #     "scheduler_states": self.scheduler.state_dict(),
-        #     "checkpointer_states": self.checkpointer.state_dict(),
-        # }
-        # # save amp states
-        # if self.config.training.fp16:
-        #     states["amp"] = amp.state_dict()
-        # # use the current iteration number as the stamp
-        # self.checkpointer.save_checkpoint("iter_" + str(self.__global_count), states)
+        states = self.state_dict()
+        self.checkpointer.save_checkpoint("iter_" + str(self.__global_count), states)
 
     def __restore_checkpoint(self):
+        logger.info("Restoring the latest checkpoint")
         states = self.checkpointer.restore_latest_checkpoint()
-        if states is not None:
-            self.__epochs_trained = states["epoch"]
-            self.__global_count = states["iteration"]
-            self.model.load_state_dict(states["model_states"])
-            self.optimizer.load_state_dict(states["optimizer_states"])
-            self.scheduler.load_state_dict(states["scheduler_states"])
-            self.checkpointer.load_state_dict(states["checkpointer_states"])
-            # restore amp states
-            if self.config.training.fp16:
-                amp.load_state_dict(states["amp"])
+        return states
 
-            logger.info("Loaded the latest checkpoint")
+    def state_dict(self):
+        if self.config.training.num_gpus_per_node > 1:
+            model_states = self.model.module.state_dict()
         else:
-            logger.info("No checkpoint found. Training from scratch!")
+            model_states = self.model.state_dict()
+        states = {
+            "epoch": self.__epochs_trained,
+            "iteration": self.__global_count,
+            "model_states": model_states,
+            "optimizer_states": self.optimizer.state_dict(),
+            "scheduler_states": self.scheduler.state_dict(),
+            "checkpointer_states": self.checkpointer.state_dict(),
+        }
+        # save amp states
+        if self.config.training.fp16:
+            states["amp"] = amp.state_dict()
+        return states
+
+    def load_state_dict(self, states: Dict[str, Any]):
+        self.__epochs_trained = states["epoch"]
+        self.__global_count = states["iteration"]
+        self.model.load_state_dict(states["model_states"])
+        self.optimizer.load_state_dict(states["optimizer_states"])
+        self.scheduler.load_state_dict(states["scheduler_states"])
+        self.checkpointer.load_state_dict(states["checkpointer_states"])
+        # restore amp states
+        if self.config.training.fp16:
+            amp.load_state_dict(states["amp"])
 
     def __set_random_seed(self, random_seed):
         # Reproducibility

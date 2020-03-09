@@ -56,6 +56,7 @@ class Checkpointer:
         ray_obj = torchfly_dev.async_save(states, checkpoint_path)
         self.background_tasks.append(ray_obj)
 
+
         # remove the old one
         if self.num_checkpoints_to_keep >= 0:
             self._saved_checkpoint_paths.append((datetime.datetime.now(), checkpoint_path))
@@ -91,6 +92,7 @@ class Checkpointer:
             latest_file_path = os.path.join(self.storage_dir, latest_file)
             try:
                 checkpoint = torch.load(latest_file_path, map_location="cpu")
+                checkpoint["file_path"] = latest_file_path
                 logger.info(f"Loading checkpoint {latest_file_path}")
                 return checkpoint
             except (pickle.UnpicklingError, RuntimeError):

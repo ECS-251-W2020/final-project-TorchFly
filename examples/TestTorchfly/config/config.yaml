@@ -13,15 +13,15 @@ training:
     gradient_accumulation_steps: 1
     max_grad_norm: 1.0 # disabled when negative
     optimizer: "AdamW"
-    batch_size: 1024
+    batch_size: 32
     total_num_epochs: 10
 saving:
     # when saving.iterations_interval and saving.seconds_interval
     # are both negative, save the models for every epoch
     iterations_interval: -1
-    seconds_interval: 10 # disabled when iterations_interval > 1
+    seconds_interval: 2 # disabled when iterations_interval > 1
     # checkpointer
-    num_checkpoints_to_keep: 1
+    num_checkpoints_to_keep: 2
     keep_checkpoint_every_num_seconds: 3600
     resume_mode: true
 logging:
