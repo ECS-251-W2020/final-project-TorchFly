@@ -11,10 +11,14 @@ def get_cwd():
     except AttributeError:
         return os.getcwd()
 
-class WarpDataloader(torch.utils.data.DataLoader):
+class CycleDataloader(torch.utils.data.DataLoader):
+    """
+    A warpper to DataLoader that the `__next__` method will never end. 
+    """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-  
+        self.iterator = None
+
     def __iter__(self):
         for batch in super().__iter__():
             batch = {
@@ -22,13 +26,20 @@ class WarpDataloader(torch.utils.data.DataLoader):
                 "target": batch[1]
             }
             yield batch
-    
+
     def __next__(self):
-        return next(self.__iter__())
+        if self.iterator is None:
+            self.iterator = self.__iter__()
+        try:
+            batch = next(self.iterator)
+        except StopIteration:
+            self.iterator = self.__iter__()
+            batch = next(self.iterator)
+        return batch
 
 def get_data_loader(config):
     kwargs = {'num_workers': 0, 'pin_memory': True}
-    train_loader = WarpDataloader(
+    train_loader = CycleDataloader(
         datasets.MNIST(os.path.join(get_cwd(), 'data'), train=True, download=True,
                     transform=transforms.Compose([
                         transforms.ToTensor(),

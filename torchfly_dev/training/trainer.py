@@ -93,16 +93,20 @@ class Trainer:
 
     def __setup_configuration(self):
         # Set Num of Epochs and Num of Iterations
-        # if the num of epochs is set 
-        if self.config.training.total_num_epochs > 0:   
-            self.__total_num_iterations = len(self.train_loader) * self.config.training.total_num_epochs // self.config.training.num_gpus_per_node
+        # if the num of epochs is set
+        if self.config.training.total_num_epochs > 0:
+            self.__total_num_iterations = len(
+                self.train_loader
+            ) * self.config.training.total_num_epochs // self.config.training.num_gpus_per_node
             self.__total_num_epochs = self.config.training.total_num_epochs
         # num of epochs is not set
         else:
             if self.config.training.total_num_iterations is None:
                 raise NotImplementedError("Please specify the `total_num_epochs` or `total_num_iterations`!")
             else:
-               self.__total_num_epochs = self.__total_num_iterations * self.config.training.num_gpus_per_node // len(self.train_loader)
+                self.__total_num_epochs = self.__total_num_iterations * self.config.training.num_gpus_per_node // len(
+                    self.train_loader
+                )
 
         # if self.config.training.validation_interval is None:
         #     # save for every epoch
@@ -225,7 +229,7 @@ class Trainer:
 
             # The state should be perserved by torch.get_rng_state
             # However, this solution is not deterministic, but at least it ensures
-            # the randomness when loading data 
+            # the randomness when loading data
             batch = next(self.train_loader)
 
             batch = move_to_device(batch, self.__device)
@@ -273,7 +277,7 @@ class Trainer:
             self.__global_count += 1
 
             # reset the counters
-            if self.__count_in_epoch == len(self.train_loader):
+            if self.__count_in_epoch >= len(self.train_loader):
                 self.__epochs_trained += 1
                 self.__count_in_epoch = 0
 
@@ -330,74 +334,74 @@ class Trainer:
 
         return results
 
-    def __train_epoch(self, epoch):
-        self.model.train()
+    # def __train_epoch(self, epoch):
+    #     self.model.train()
 
-        if self.__master:
-            if self.__count_in_epoch > 0:
-                logger.info("Resume the training!")
-            logger.info("Epoch %d/%d", epoch + 1, self.__total_num_epochs)
+    #     if self.__master:
+    #         if self.__count_in_epoch > 0:
+    #             logger.info("Resume the training!")
+    #         logger.info("Epoch %d/%d", epoch + 1, self.__total_num_epochs)
 
-        for batch_idx, batch in enumerate(self.train_loader):
-            # Resume the training
-            if self.__count_in_epoch > batch_idx:
-                continue
-            else:
-                self.__count_in_epoch = batch_idx
+    #     for batch_idx, batch in enumerate(self.train_loader):
+    #         # Resume the training
+    #         if self.__count_in_epoch > batch_idx:
+    #             continue
+    #         else:
+    #             self.__count_in_epoch = batch_idx
 
-            batch = move_to_device(batch, self.__device)
-            results = self.__train_iter(batch)
+    #         batch = move_to_device(batch, self.__device)
+    #         results = self.__train_iter(batch)
 
-            # Update the model
-            if self.__global_count % self.config.training.gradient_accumulation_steps == (
-                self.config.training.gradient_accumulation_steps - 1
-            ):
-                self.optimizer.step()
-                self.scheduler.step()
-                self.optimizer.zero_grad()
+    #         # Update the model
+    #         if self.__global_count % self.config.training.gradient_accumulation_steps == (
+    #             self.config.training.gradient_accumulation_steps - 1
+    #         ):
+    #             self.optimizer.step()
+    #             self.scheduler.step()
+    #             self.optimizer.zero_grad()
 
-            # Checkpointing
-            if self.__master:
-                if self.__save_in_seconds:
-                    current_time = time.time()
-                    iter_elapsed_time = current_time - self.__save_iter_start_time
+    #         # Checkpointing
+    #         if self.__master:
+    #             if self.__save_in_seconds:
+    #                 current_time = time.time()
+    #                 iter_elapsed_time = current_time - self.__save_iter_start_time
 
-                    if iter_elapsed_time > self.config.saving.seconds_interval:
-                        self.__save_checkpoint()
-                        self.__save_iter_start_time = current_time
-                else:
-                    if self.__global_count % self.config.saving.iterations_interval == (
-                        self.config.saving.iterations_interval - 1
-                    ):
-                        self.__save_checkpoint()
+    #                 if iter_elapsed_time > self.config.saving.seconds_interval:
+    #                     self.__save_checkpoint()
+    #                     self.__save_iter_start_time = current_time
+    #             else:
+    #                 if self.__global_count % self.config.saving.iterations_interval == (
+    #                     self.config.saving.iterations_interval - 1
+    #                 ):
+    #                     self.__save_checkpoint()
 
-            # Logging
-            if self.__master:
-                if self.__log_in_seconds:
-                    current_time = time.time()
-                    iter_elapsed_time = current_time - self.__log_iter_start_time
+    #         # Logging
+    #         if self.__master:
+    #             if self.__log_in_seconds:
+    #                 current_time = time.time()
+    #                 iter_elapsed_time = current_time - self.__log_iter_start_time
 
-                    if iter_elapsed_time > self.config.logging.seconds_interval:
-                        self.__log_iteration(batch_idx, results)
-                        self.__log_iter_start_time = current_time
-                else:
-                    if self.__global_count % self.config.logging.iterations_interval == (
-                        self.config.logging.iterations_interval - 1
-                    ):
-                        self.__log_iteration(batch_idx, results)
+    #                 if iter_elapsed_time > self.config.logging.seconds_interval:
+    #                     self.__log_iteration(batch_idx, results)
+    #                     self.__log_iter_start_time = current_time
+    #             else:
+    #                 if self.__global_count % self.config.logging.iterations_interval == (
+    #                     self.config.logging.iterations_interval - 1
+    #                 ):
+    #                     self.__log_iteration(batch_idx, results)
 
-            self.__global_count += 1
+    #         self.__global_count += 1
 
-            # Validation
-            # if self._master:
-            #     if self.validation_loader is not None and self._global_count % self.config.training.validation_interval == (
-            #         self.config.training.validation_interval - 1
-            #     ):
-            #         self.validate()
+    #         # Validation
+    #         # if self._master:
+    #         #     if self.validation_loader is not None and self._global_count % self.config.training.validation_interval == (
+    #         #         self.config.training.validation_interval - 1
+    #         #     ):
+    #         #         self.validate()
 
-        # reset the counter
-        self.__count_in_epoch = 0
-        return 0
+    #     # reset the counter
+    #     self.__count_in_epoch = 0
+    #     return 0
 
     def validate(self):
         NotImplementedError
@@ -452,10 +456,16 @@ class Trainer:
         self.optimizer.load_state_dict(states["optimizer_states"])
         self.scheduler.load_state_dict(states["scheduler_states"])
         self.checkpointer.load_state_dict(states["checkpointer_states"])
-        
+        # cpu random state
         torch.set_rng_state(states["cpu_rng_states"])
-        torch.cuda.set_rng_state_all(states["cuda_rng_states"])
-
+        # sometimes we have less number of devices
+        states["cuda_rng_states"] = states["cpu_rng_states"][:torch.cuda.device_count()]
+        try:
+            torch.cuda.set_rng_state_all(states["cuda_rng_states"])
+        except (IndexError, RuntimeError):
+            # if we still cannot load back cuda rng_states, we ignore it
+            logger.warn("Cannot restore CUDA random state!")
+            pass
         # restore amp states
         if self.config.training.fp16:
             amp.load_state_dict(states["amp"])

@@ -3,8 +3,8 @@ defaults:
     - hydra/hydra_logging: colorlog
 training:
     # reproduce
-    random_seed: 1
-    num_gpus_per_node: 2
+    random_seed: 123
+    num_gpus_per_node: 1
     # Mixed Precision
     fp16: true
     fp16_opt_level: "O1" # O0 to disable fp16
@@ -13,23 +13,23 @@ training:
     gradient_accumulation_steps: 1
     max_grad_norm: 1.0 # disabled when negative
     optimizer: "AdamW"
-    batch_size: 32
+    batch_size: 16
     total_num_epochs: 10
     total_num_iterations: 10 # disabled when total_num_epochs > 0
 saving:
     # when saving.iterations_interval and saving.seconds_interval
     # are both negative, save the models for every epoch
     iterations_interval: -1
-    seconds_interval: 2 # disabled when iterations_interval > 1
+    seconds_interval: -1 # disabled when iterations_interval > 1
     # checkpointer
-    num_checkpoints_to_keep: 2
+    num_checkpoints_to_keep: 1
     keep_checkpoint_every_num_seconds: 3600
     resume_mode: true
 logging:
     color: true
-    level: "DEBUG"    
+    level: "INFO"    
     iterations_interval: -1 # disabled when negative
-    seconds_interval: 1 # disabled when `log_iterations_interval` is set
+    seconds_interval: 2 # disabled when `log_iterations_interval` is set
 task:
     data_dir: /home/wuqy1203/Documents/glue_data/MRPC
     task_name: mrpc
