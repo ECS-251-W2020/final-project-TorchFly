@@ -174,8 +174,7 @@ class Trainer:
         # Distributed training (should be after apex fp16 initialization)
         self.model = DistributedDataParallel(self.model)
 
-        epoch_results = self.__train()
-
+        self.__train()
         return None
 
     def __setup_training(self) -> None:
@@ -218,8 +217,11 @@ class Trainer:
             epoch_start_time = time.time()
 
         if self.__master:
-            if self.__count_in_epoch > 0:
+            if self.__global_count > 0:
+                resume_training = True
                 logger.info("Resume the training!")
+            else:
+                resume_training = False
 
         for _ in range(self.__global_count, self.__total_num_iterations):
             if self.__master:
@@ -233,7 +235,7 @@ class Trainer:
             batch = next(self.train_loader)
 
             batch = move_to_device(batch, self.__device)
-            results = self.__train_iter(batch)
+            results = self.train_iter(batch)
 
             # Update the model
             if self.__global_count % self.config.training.gradient_accumulation_steps == (
@@ -260,7 +262,10 @@ class Trainer:
 
             # Logging
             if self.__master:
-                if self.__log_in_seconds:
+                if resume_training:
+                    self.__log_iteration(self.__count_in_epoch, results)
+                    resume_training = False
+                elif self.__log_in_seconds:
                     current_time = time.time()
                     iter_elapsed_time = current_time - self.__log_iter_start_time
 
@@ -319,7 +324,7 @@ class Trainer:
         results = {}
         return results
 
-    def __train_iter(self, batch: Dict[str, torch.Tensor]) -> Dict[str, Any]:
+    def train_iter(self, batch: Dict[str, torch.Tensor]) -> Dict[str, Any]:
         results = self.model(batch)
         loss = results["loss"]
 
@@ -333,75 +338,6 @@ class Trainer:
             loss.backward()
 
         return results
-
-    # def __train_epoch(self, epoch):
-    #     self.model.train()
-
-    #     if self.__master:
-    #         if self.__count_in_epoch > 0:
-    #             logger.info("Resume the training!")
-    #         logger.info("Epoch %d/%d", epoch + 1, self.__total_num_epochs)
-
-    #     for batch_idx, batch in enumerate(self.train_loader):
-    #         # Resume the training
-    #         if self.__count_in_epoch > batch_idx:
-    #             continue
-    #         else:
-    #             self.__count_in_epoch = batch_idx
-
-    #         batch = move_to_device(batch, self.__device)
-    #         results = self.__train_iter(batch)
-
-    #         # Update the model
-    #         if self.__global_count % self.config.training.gradient_accumulation_steps == (
-    #             self.config.training.gradient_accumulation_steps - 1
-    #         ):
-    #             self.optimizer.step()
-    #             self.scheduler.step()
-    #             self.optimizer.zero_grad()
-
-    #         # Checkpointing
-    #         if self.__master:
-    #             if self.__save_in_seconds:
-    #                 current_time = time.time()
-    #                 iter_elapsed_time = current_time - self.__save_iter_start_time
-
-    #                 if iter_elapsed_time > self.config.saving.seconds_interval:
-    #                     self.__save_checkpoint()
-    #                     self.__save_iter_start_time = current_time
-    #             else:
-    #                 if self.__global_count % self.config.saving.iterations_interval == (
-    #                     self.config.saving.iterations_interval - 1
-    #                 ):
-    #                     self.__save_checkpoint()
-
-    #         # Logging
-    #         if self.__master:
-    #             if self.__log_in_seconds:
-    #                 current_time = time.time()
-    #                 iter_elapsed_time = current_time - self.__log_iter_start_time
-
-    #                 if iter_elapsed_time > self.config.logging.seconds_interval:
-    #                     self.__log_iteration(batch_idx, results)
-    #                     self.__log_iter_start_time = current_time
-    #             else:
-    #                 if self.__global_count % self.config.logging.iterations_interval == (
-    #                     self.config.logging.iterations_interval - 1
-    #                 ):
-    #                     self.__log_iteration(batch_idx, results)
-
-    #         self.__global_count += 1
-
-    #         # Validation
-    #         # if self._master:
-    #         #     if self.validation_loader is not None and self._global_count % self.config.training.validation_interval == (
-    #         #         self.config.training.validation_interval - 1
-    #         #     ):
-    #         #         self.validate()
-
-    #     # reset the counter
-    #     self.__count_in_epoch = 0
-    #     return 0
 
     def validate(self):
         NotImplementedError
@@ -495,6 +431,75 @@ class Trainer:
         if self.__tensorboard:
             self.__tensorboard.add_scalar("loss", _loss, self.__global_count + 1)
 
+    # NOT USED
+    # def __train_epoch(self, epoch):
+    #     self.model.train()
+
+    #     if self.__master:
+    #         if self.__count_in_epoch > 0:
+    #             logger.info("Resume the training!")
+    #         logger.info("Epoch %d/%d", epoch + 1, self.__total_num_epochs)
+
+    #     for batch_idx, batch in enumerate(self.train_loader):
+    #         # Resume the training
+    #         if self.__count_in_epoch > batch_idx:
+    #             continue
+    #         else:
+    #             self.__count_in_epoch = batch_idx
+
+    #         batch = move_to_device(batch, self.__device)
+    #         results = self.__train_iter(batch)
+
+    #         # Update the model
+    #         if self.__global_count % self.config.training.gradient_accumulation_steps == (
+    #             self.config.training.gradient_accumulation_steps - 1
+    #         ):
+    #             self.optimizer.step()
+    #             self.scheduler.step()
+    #             self.optimizer.zero_grad()
+
+    #         # Checkpointing
+    #         if self.__master:
+    #             if self.__save_in_seconds:
+    #                 current_time = time.time()
+    #                 iter_elapsed_time = current_time - self.__save_iter_start_time
+
+    #                 if iter_elapsed_time > self.config.saving.seconds_interval:
+    #                     self.__save_checkpoint()
+    #                     self.__save_iter_start_time = current_time
+    #             else:
+    #                 if self.__global_count % self.config.saving.iterations_interval == (
+    #                     self.config.saving.iterations_interval - 1
+    #                 ):
+    #                     self.__save_checkpoint()
+
+    #         # Logging
+    #         if self.__master:
+    #             if self.__log_in_seconds:
+    #                 current_time = time.time()
+    #                 iter_elapsed_time = current_time - self.__log_iter_start_time
+
+    #                 if iter_elapsed_time > self.config.logging.seconds_interval:
+    #                     self.__log_iteration(batch_idx, results)
+    #                     self.__log_iter_start_time = current_time
+    #             else:
+    #                 if self.__global_count % self.config.logging.iterations_interval == (
+    #                     self.config.logging.iterations_interval - 1
+    #                 ):
+    #                     self.__log_iteration(batch_idx, results)
+
+    #         self.__global_count += 1
+
+    #         # Validation
+    #         # if self._master:
+    #         #     if self.validation_loader is not None and self._global_count % self.config.training.validation_interval == (
+    #         #         self.config.training.validation_interval - 1
+    #         #     ):
+    #         #         self.validate()
+
+    #     # reset the counter
+    #     self.__count_in_epoch = 0
+    #     return 0
 
 def set_random_port(self):
     """
