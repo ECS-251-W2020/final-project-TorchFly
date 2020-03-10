@@ -8,7 +8,8 @@ import numpy as np
 import torch
 from torchvision import datasets, transforms
 
-from torchfly_dev.training import Trainer
+# from torchfly_dev.training.trainer import Trainer
+from torchfly_dev.training.trainer2 import Trainer2
 
 from model import CNNNet
 from dataloader import get_data_loader
@@ -19,9 +20,9 @@ logger = logging.getLogger(__name__)
 @hydra.main(config_path="config/config.yaml", strict=False)
 def main(config=None):
     # set data loader
-    train_loader, test_loader = get_data_loader(config)
+    train_loader, val_loader = get_data_loader(config)
     model = CNNNet(config)
-    trainer = Trainer(config=config, model=model, train_loader=train_loader, validation_loader=test_loader)
+    trainer = Trainer2(config=config, model=model, train_loader=train_loader, validation_loader=val_loader)
     trainer.train()
     breakpoint()
 

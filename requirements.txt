@@ -2,9 +2,9 @@
 hydra-core
 hydra-colorlog
 colorlog==4.1.0
+tensorboard
 #### old
 regex
-pytorch
 transformers
 # google drive download
 gdown

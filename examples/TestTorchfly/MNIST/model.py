@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict
+from typing import Any, Dict
 
 
 class FlyModule(nn.Module, ABC):
@@ -25,7 +25,7 @@ class CNNNet(FlyModule):
         self.fc1 = nn.Linear(9216, 128)
         self.fc2 = nn.Linear(128, 10)
 
-    def forward(self, batch):
+    def forward(self, batch: Dict[str, Any]) -> Dict[str, Any]:
         x = batch["input"]
         target = batch["target"]
         x = self.conv1(x)

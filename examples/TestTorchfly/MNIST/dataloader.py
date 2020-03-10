@@ -47,7 +47,7 @@ def get_data_loader(config):
                     ])),
         batch_size=config.training.batch_size, shuffle=True, **kwargs)
 
-    test_loader = torch.utils.data.DataLoader(
+    test_loader = CycleDataloader(
     datasets.MNIST(os.path.join(get_cwd(), 'data'), train=False, transform=transforms.Compose([
                         transforms.ToTensor(),
                         transforms.Normalize((0.1307,), (0.3081,))

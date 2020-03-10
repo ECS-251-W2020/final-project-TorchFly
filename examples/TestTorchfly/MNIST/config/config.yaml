@@ -29,4 +29,4 @@ logging:
     color: true
     level: "DEBUG"
     iterations_interval: -1 # disabled when negative
-    seconds_interval: 1 # disabled when `log_iterations_interval` is set
+    seconds_interval: 2 # disabled when `log_iterations_interval` is set
