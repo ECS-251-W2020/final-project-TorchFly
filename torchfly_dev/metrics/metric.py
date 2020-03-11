@@ -1,9 +1,10 @@
 import torch
-from abc import ABC
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
+from ..common.registrable import Registrable
 
-class Metric(ABC):
+
+class Metric(Registrable):
     """
     A very general abstract class representing a metric which can be
     accumulated. (allennlp/training/metrics/metric.py)
@@ -32,4 +33,4 @@ class Metric(ABC):
         graph. This method ensures the tensors are detached.
         """
         # Check if it's actually a tensor in case something else was passed.
-        return (x.detach() if isinstance(x, torch.Tensor) else x for x in tensors)
+        return (x.detach().cpu() if isinstance(x, torch.Tensor) else x for x in tensors)

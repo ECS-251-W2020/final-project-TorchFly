@@ -87,10 +87,10 @@ class CategoricalAccuracy(Metric):
             self.total_count += gold_labels.numel()
         self.correct_count += correct.sum()
 
-    def get_metric(self, reset: bool = False):
+    def get_metric(self, reset: bool = False) -> float:
         """
-        # Returns
-        The accumulated accuracy.
+        Returns:
+            The accumulated accuracy.
         """
         if self.total_count > 1e-12:
             accuracy = float(self.correct_count) / float(self.total_count)

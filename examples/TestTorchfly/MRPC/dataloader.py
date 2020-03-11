@@ -94,11 +94,10 @@ def load_and_cache_examples(config, task, tokenizer, evaluate=False):
     return dataset
 
 
-def get_data_loader(config):
+def get_data_loader(config, evaluate=False):
     tokenizer = AutoTokenizer.from_pretrained("roberta-base")
-    train_dataset = load_and_cache_examples(config, config.task.task_name, tokenizer, evaluate=False)
-    train_sampler = RandomSampler(train_dataset
-                                 ) if config.training.num_gpus_per_node == 1 else DistributedSampler(train_dataset)
+    train_dataset = load_and_cache_examples(config, config.task.task_name, tokenizer, evaluate=evaluate)
+    train_sampler = RandomSampler(train_dataset) if config.training.num_gpus_per_node == 1 or evaluate else DistributedSampler(train_dataset)
     train_dataloader = CycleDataloader(train_dataset, sampler=train_sampler, batch_size=config.training.batch_size)
 
     return train_dataloader

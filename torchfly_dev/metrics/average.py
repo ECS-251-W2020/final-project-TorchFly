@@ -1,6 +1,6 @@
 import logging
-import overrides
 import numpy as np
+from overrides import overrides
 
 from .metric import Metric
 

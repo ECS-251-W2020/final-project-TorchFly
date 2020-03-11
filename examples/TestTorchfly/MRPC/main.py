@@ -16,14 +16,17 @@ from dataloader import get_data_loader
 logger = logging.getLogger(__name__)
 
 
+def train_loader_fn(config):
+    return get_data_loader(config)
+
+
 @hydra.main(config_path="config/config.yaml", strict=False)
 def main(config=None):
     # set data loader
-    train_loader = get_data_loader(config)
+    val_loader = get_data_loader(config, evaluate=True)
     model = get_model()
-    trainer = Trainer(config=config, model=model, train_loader=train_loader)
+    trainer = Trainer(config=config, model=model, validation_loader=val_loader, train_loader_fn=train_loader_fn)
     trainer.train()
-    breakpoint()
 
 
 if __name__ == "__main__":

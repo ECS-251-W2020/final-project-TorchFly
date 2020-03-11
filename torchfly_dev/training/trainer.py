@@ -6,7 +6,7 @@ import signal
 import time
 import datetime
 import logging
-from typing import Any, List, Dict, Iterator
+from typing import Any, List, Dict, Iterator, Callable
 from omegaconf import DictConfig
 from apex import amp
 import numpy as np
@@ -23,7 +23,7 @@ from apex.parallel import DistributedDataParallel, Reducer
 
 from .checkpointer import Checkpointer
 from .optimization import ConstantLRSchedule, WarmupConstantSchedule, WarmupCosineSchedule, WarmupLinearSchedule, WarmupCosineWithHardRestartsSchedule
-from ..utils import move_to_device, configure_logging
+from ..common import move_to_device, configure_logging
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,8 @@ class Trainer:
         model: nn.Module = None,
         train_loader: Iterator = None,
         validation_loader: Iterator = None,
-        test_loader: Iterator = None
+        test_loader: Iterator = None,
+        train_loader_fn: Callable = None,
     ):
         """
         Do not send anything to cuda in __init__
@@ -58,10 +59,9 @@ class Trainer:
 
         # # Data Loading
         self.train_loader = train_loader
+        self.train_loader_fn = train_loader_fn
         self.validation_loader = validation_loader
         self.test_loader = test_loader
-
-        self.__setup_configuration()
 
         # local variables
         self.__global_count = 0
@@ -77,6 +77,12 @@ class Trainer:
         # setup the scheduler
         self.optimizer = self.configure_optimizer()
 
+        if self.config.saving.save_dir is None:
+            # Saving directory
+            self.config.saving.save_dir = os.path.join(os.getcwd(), "Checkpoints")
+        else:
+            self.config.saving.save_dir = os.path.join(os.getcwd(), self.config.saving.save_dir)
+
         # # Checkpointer
         self.checkpointer = Checkpointer(
             sync_every_save=True,
@@ -84,35 +90,6 @@ class Trainer:
             keep_checkpoint_every_num_seconds=config.saving.keep_checkpoint_every_num_seconds,
             storage_dir=self.config.saving.save_dir
         )
-
-        # # Resume the training
-        # # find the any checkpoint
-        if self.config.training.resume:
-            self.__cache_states = self.__restore_checkpoint()
-
-    def __setup_configuration(self):
-        # Set Num of Epochs and Num of Iterations
-        # if the num of epochs is set
-        if self.config.training.total_num_epochs > 0:
-            self.__total_num_iterations = len(self.train_loader) * self.config.training.total_num_epochs
-            self.__total_num_epochs = self.config.training.total_num_epochs
-        # num of epochs is not set
-        else:
-            if self.config.training.total_num_iterations is None:
-                raise NotImplementedError("Please specify the `total_num_epochs` or `total_num_iterations`!")
-            else:
-                self.__total_num_epochs = self.__total_num_iterations // len(self.train_loader)
-
-        # Setup validation interval
-        if self.config.training.validation_iterations_interval is None or \
-            self.config.training.validation_iterations_interval < 0:
-            # validation for every epoch
-            self.config.training.validation_iterations_interval = len(
-                self.train_loader
-            ) // self.config.training.num_gpus_per_node - 1
-
-        # Saving directory
-        self.config.saving.save_dir = os.path.join(os.getcwd(), "Checkpoints")
 
         # Logging
         self.__log_in_seconds = False
@@ -136,10 +113,47 @@ class Trainer:
 
         logger.info(self.config.pretty())
 
+        # # Resume the training
+        # # find the any checkpoint
+        if self.config.training.resume:
+            self.__cache_states = self.__restore_checkpoint()
+
+    def __setup_configuration(self):
+        # Reproducibility
+        if self.config.training.random_seed:
+            self.__set_random_seed(self.__rank + self.config.training.random_seed)
+
+        # DataLoader
+        if self.train_loader is None:
+            if self.train_loader_fn is None:
+                logger.error("Please specify either `train_loader` or `train_loader_fn`!")
+                raise NotImplementedError
+            self.train_loader = self.train_loader_fn(self.config)
+
+        # Set Num of Epochs and Num of Iterations
+        # if the num of epochs is set
+        if self.config.training.total_num_epochs > 0:
+            self.__total_num_iterations = len(self.train_loader) * self.config.training.total_num_epochs
+            self.__total_num_epochs = self.config.training.total_num_epochs
+        # num of epochs is not set
+        else:
+            if self.config.training.total_num_iterations is None:
+                raise NotImplementedError("Please specify the `total_num_epochs` or `total_num_iterations`!")
+            else:
+                self.__total_num_epochs = self.__total_num_iterations // len(self.train_loader)
+
+        # Setup validation interval
+        if self.config.training.validation_iterations_interval is None or \
+            self.config.training.validation_iterations_interval < 0:
+            # validation for every epoch
+            self.config.training.validation_iterations_interval = len(self.train_loader) - 1
+
     def __single_gpu_train(self):
         self.__rank = 0
         self.__master = True
         self.__device = torch.device("cuda")
+
+        self.__setup_configuration()
         self.__setup_training()
 
         epoch_results = self.__train()
@@ -153,6 +167,7 @@ class Trainer:
         Args:
             rank: also the gpu index
         """
+
         self.__rank = rank
         self.__master = rank == 0
         torch.cuda.set_device(rank)
@@ -164,6 +179,7 @@ class Trainer:
             backend="nccl", rank=self.__rank, world_size=self.config.training.num_gpus_per_node
         )
 
+        self.__setup_configuration()
         self.__setup_training()
 
         # Distributed training (should be after apex fp16 initialization)
@@ -182,13 +198,10 @@ class Trainer:
                 logger.removeFilter(_filter)
 
             configure_logging(self.config)
+            
             if not ray.is_initialized():
                 logger.info(ray.init())
             self.__tensorboard = SummaryWriter(log_dir=os.getcwd(), purge_step=self.__global_count)
-
-        # Reproducibility
-        if self.config.training.random_seed:
-            self.__set_random_seed(self.__rank + self.config.training.random_seed)
 
         # To Device
         self.model = move_to_device(self.model, self.__device)
@@ -279,6 +292,7 @@ class Trainer:
                     if iter_elapsed_time > self.config.logging.seconds_interval:
                         self.__log_iteration(self.__count_in_epoch, results)
                         self.__log_iter_start_time = current_time
+                        
                 else:
                     if self.__global_count % self.config.logging.iterations_interval == (
                         self.config.logging.iterations_interval - 1
@@ -301,9 +315,11 @@ class Trainer:
             # Validation
             if self.__master:
                 if self.__global_count % self.config.training.validation_iterations_interval == 0:
-                    self.model.eval()
-                    self.validate()
-                    self.model.train()
+                    if self.validation_loader:
+                        self.model.eval()
+                        logger.info("Validation Starts!")
+                        self.validate()
+                        self.model.train()
 
         if self.__master:
             self.__tensorboard.close()
@@ -315,7 +331,7 @@ class Trainer:
             logger.info("Initializing Distributed Training")
 
             if 'OMP_NUM_THREADS' not in os.environ and self.config.training.num_gpus_per_node > 1:
-                os.environ["OMP_NUM_THREADS"] = str(1)
+                os.environ["OMP_NUM_THREADS"] = str(4)
                 logger.info(
                     "\n*****************************************\n"
                     "Setting OMP_NUM_THREADS environment variable for each process \n"
@@ -357,18 +373,25 @@ class Trainer:
 
     def validate(self):
         self.model.eval()
-        # acc = []
-        # self.__epochs_trained
-        # for batch in self.validation_loader:
-        #     # send to cuda device
-        #     batch = move_to_device(batch, self.__device)
-        #     with torch.no_grad():
-        #         results = self.model(batch)
+        for batch in self.validation_loader:
+            # send to cuda device
+            batch = move_to_device(batch, self.__device)
+            with torch.no_grad():
+                if self.config.training.num_gpus_per_node > 1:
+                    self.model.module.predict(batch)
+                else:
+                    self.model.predict(batch)
 
-        #     output = results['output'].argmax(dim=1)
-        #     target = batch["target"]
-        #     acc.extend((output == target).tolist())
-        # logger.info(f"Validation Accuracy {np.mean(acc)*100:4.2f}")
+        if self.config.training.num_gpus_per_node > 1:
+            metrics = self.model.module.get_metrics(reset=True)
+        else:
+            metrics = self.model.get_metrics(reset=True)
+
+        for metric_name, value in metrics.items():
+            metric_name = metric_name[0].upper() + metric_name[1:]
+            logger.info(f"Epoch {self.__epochs_trained}: Validation {metric_name} {value:4.4f}")
+            if isinstance(value, float):
+                self.__tensorboard.add_scalar(metric_name, value, global_step=self.__global_count)
 
     def configure_optimizer(self) -> Optimizer:
         if self.config.training.optimizer == "AdamW":
