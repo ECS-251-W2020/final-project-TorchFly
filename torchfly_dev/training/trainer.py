@@ -20,10 +20,9 @@ import torch.multiprocessing as multiprocessing
 import torch.distributed
 from apex.parallel import DistributedDataParallel, Reducer
 # from torch.nn.parallel import DistributedDataParallel
-from hydra.utils import get_original_cwd
 
 from .checkpointer import Checkpointer
-from .optimization import ConstantLRSchedule
+from .optimization import ConstantLRSchedule, WarmupConstantSchedule, WarmupCosineSchedule, WarmupLinearSchedule, WarmupCosineWithHardRestartsSchedule
 from ..utils import move_to_device, configure_logging
 
 logger = logging.getLogger(__name__)
@@ -88,36 +87,32 @@ class Trainer:
 
         # # Resume the training
         # # find the any checkpoint
-        if self.config.saving.resume_mode:
+        if self.config.training.resume:
             self.__cache_states = self.__restore_checkpoint()
 
     def __setup_configuration(self):
         # Set Num of Epochs and Num of Iterations
         # if the num of epochs is set
         if self.config.training.total_num_epochs > 0:
-            self.__total_num_iterations = len(
-                self.train_loader
-            ) * self.config.training.total_num_epochs // self.config.training.num_gpus_per_node
+            self.__total_num_iterations = len(self.train_loader) * self.config.training.total_num_epochs
             self.__total_num_epochs = self.config.training.total_num_epochs
         # num of epochs is not set
         else:
             if self.config.training.total_num_iterations is None:
                 raise NotImplementedError("Please specify the `total_num_epochs` or `total_num_iterations`!")
             else:
-                self.__total_num_epochs = self.__total_num_iterations * self.config.training.num_gpus_per_node // len(
-                    self.train_loader
-                )
+                self.__total_num_epochs = self.__total_num_iterations // len(self.train_loader)
 
-        # if self.config.training.validation_interval is None:
-        #     # save for every epoch
-        #     self.config.training.validation_interval = len(self.train_loader) - 1
+        # Setup validation interval
+        if self.config.training.validation_iterations_interval is None or \
+            self.config.training.validation_iterations_interval < 0:
+            # validation for every epoch
+            self.config.training.validation_iterations_interval = len(
+                self.train_loader
+            ) // self.config.training.num_gpus_per_node - 1
 
         # Saving directory
-        if self.config.saving.resume_mode:
-            self.config.saving.save_dir = get_original_cwd()
-        else:
-            self.config.saving.save_dir = os.getcwd()
-        self.config.saving.save_dir = os.path.join(self.config.saving.save_dir, "Checkpoints")
+        self.config.saving.save_dir = os.path.join(os.getcwd(), "Checkpoints")
 
         # Logging
         self.__log_in_seconds = False
@@ -179,10 +174,17 @@ class Trainer:
 
     def __setup_training(self) -> None:
         if self.__master:
-            if self.config.training.num_gpus_per_node > 1:
-                configure_logging(self.config)
-            logger.info(ray.init())
-            self.__tensorboard = SummaryWriter(log_dir=os.getcwd())
+            # close existing logging
+            for _handler in logger.handlers[:]:
+                _handler.close()
+                logger.removeHandler(_handler)
+            for _filter in logger.filters[:]:
+                logger.removeFilter(_filter)
+
+            configure_logging(self.config)
+            if not ray.is_initialized():
+                logger.info(ray.init())
+            self.__tensorboard = SummaryWriter(log_dir=os.getcwd(), purge_step=self.__global_count)
 
         # Reproducibility
         if self.config.training.random_seed:
@@ -238,9 +240,16 @@ class Trainer:
             results = self.train_iter(batch)
 
             # Update the model
-            if self.__global_count % self.config.training.gradient_accumulation_steps == (
-                self.config.training.gradient_accumulation_steps - 1
-            ):
+            if (self.__global_count + 1) % self.config.training.gradient_accumulation_steps == 0:
+                # gradient norm clipping
+                if self.config.training.max_gradient_norm > 0:
+                    if self.config.training.fp16:
+                        torch.nn.utils.clip_grad_norm_(
+                            amp.master_params(self.optimizer), self.config.training.max_gradient_norm
+                        )
+                    else:
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.training.max_gradient_norm)
+
                 self.optimizer.step()
                 self.scheduler.step()
                 self.optimizer.zero_grad()
@@ -255,9 +264,7 @@ class Trainer:
                         self.__save_checkpoint()
                         self.__save_iter_start_time = current_time
                 else:
-                    if self.__global_count % self.config.saving.iterations_interval == (
-                        self.config.saving.iterations_interval - 1
-                    ):
+                    if (self.__global_count + 1) % self.config.saving.iterations_interval == 0:
                         self.__save_checkpoint()
 
             # Logging
@@ -278,6 +285,7 @@ class Trainer:
                     ):
                         self.__log_iteration(self.__count_in_epoch, results)
 
+            # Post
             self.__count_in_epoch += 1
             self.__global_count += 1
 
@@ -289,6 +297,13 @@ class Trainer:
                 if self.__master:
                     epoch_elapsed_time = time.time() - epoch_start_time
                     logger.info("Epoch duration: %s", datetime.timedelta(seconds=epoch_elapsed_time))
+
+            # Validation
+            if self.__master:
+                if self.__global_count % self.config.training.validation_iterations_interval == 0:
+                    self.model.eval()
+                    self.validate()
+                    self.model.train()
 
         if self.__master:
             self.__tensorboard.close()
@@ -302,19 +317,20 @@ class Trainer:
             if 'OMP_NUM_THREADS' not in os.environ and self.config.training.num_gpus_per_node > 1:
                 os.environ["OMP_NUM_THREADS"] = str(1)
                 logger.info(
-                    "*****************************************\n"
-                    "Setting OMP_NUM_THREADS environment variable for each process "
-                    "to be {} in default, to avoid your system being overloaded, "
-                    "please further tune the variable for optimal performance in "
+                    "\n*****************************************\n"
+                    "Setting OMP_NUM_THREADS environment variable for each process \n"
+                    "to be {} in default, to avoid your system being overloaded, \n"
+                    "please further tune the variable for optimal performance in \n"
                     "your application as needed. \n"
-                    "*****************************************".format(os.environ["OMP_NUM_THREADS"])
+                    "*****************************************\n".format(os.environ["OMP_NUM_THREADS"])
                 )
 
                 os.environ["MASTER_ADDR"] = "localhost"
                 os.environ["MASTER_PORT"] = str(random.randint(20000, 29000))  # use a random port, but might collide
                 os.environ["WORLD_SIZE"] = str(self.config.training.num_gpus_per_node)
 
-                multiprocessing.log_to_stderr()
+                torch.multiprocessing.set_start_method('spawn')
+                # multiprocessing.log_to_stderr()
                 multiprocessing.spawn(self._distributed_train, args=(), nprocs=self.config.training.num_gpus_per_node)
         elif self.config.training.num_gpus_per_node == 1:
             self.__single_gpu_train()
@@ -340,15 +356,57 @@ class Trainer:
         return results
 
     def validate(self):
-        NotImplementedError
+        self.model.eval()
+        # acc = []
+        # self.__epochs_trained
+        # for batch in self.validation_loader:
+        #     # send to cuda device
+        #     batch = move_to_device(batch, self.__device)
+        #     with torch.no_grad():
+        #         results = self.model(batch)
+
+        #     output = results['output'].argmax(dim=1)
+        #     target = batch["target"]
+        #     acc.extend((output == target).tolist())
+        # logger.info(f"Validation Accuracy {np.mean(acc)*100:4.2f}")
 
     def configure_optimizer(self) -> Optimizer:
-        return torch.optim.AdamW(self.model.parameters(), lr=self.config.training.learning_rate)
+        if self.config.training.optimizer == "AdamW":
+            return torch.optim.AdamW(self.model.parameters(), lr=self.config.training.learning_rate)
+        elif self.config.training.optimizer == "Adadelta":
+            return torch.optim.Adadelta(self.model.parameters(), lr=self.config.training.learning_rate)
+        else:
+            raise NotImplementedError
 
     def configure_scheduler(self) -> LambdaLR:
-        return ConstantLRSchedule(self.optimizer)
+        if self.config.training.scheduler == "Constant":
+            return ConstantLRSchedule(self.optimizer)
+        elif self.config.training.scheduler == "WarmupConstant":
+            return WarmupConstantSchedule(self.optimizer, self.config.training.warmup_steps)
+        elif self.config.training.scheduler == "WarmupLinear":
+            return WarmupLinearSchedule(self.optimizer, self.config.training.warmup_steps, self.__total_num_iterations)
+        elif self.config.training.scheduler == "WarmupCosine":
+            if self.config.traing.warmup_cosine_cycle is None:
+                cycles = 0.5
+            else:
+                cycles = self.config.traing.warmup_cosine_cycle
+            return WarmupCosineSchedule(
+                self.optimizer, self.config.training.warmup_steps, self.__total_num_iterations, cycles=cycles
+            )
+        elif self.config.training.scheduler == "WarmupCosineWithHardRestartsSchedule":
+            if self.config.traing.warmup_cosine_cycle is None:
+                cycles = 0.5
+            else:
+                cycles = self.config.traing.warmup_cosine_cycle
+            return WarmupCosineWithHardRestartsSchedule(
+                self.optimizer, self.config.training.warmup_steps, self.__total_num_iterations, cycles=cycles
+            )
+        else:
+            logger.error("Write your own version of `configure_scheduler`!")
+            raise NotImplementedError
 
     def configure_model(self) -> nn.Module:
+        logger.error("Please define your model first!")
         raise NotImplementedError
 
     def __save_checkpoint(self) -> None:
@@ -356,7 +414,7 @@ class Trainer:
         self.checkpointer.save_checkpoint("iter_" + str(self.__global_count), states)
 
     def __restore_checkpoint(self):
-        logger.info("Restoring the latest checkpoint")
+        logger.info("Try to restore the latest checkpoint")
         states = self.checkpointer.restore_latest_checkpoint()
         return states
 
@@ -395,7 +453,7 @@ class Trainer:
         # cpu random state
         torch.set_rng_state(states["cpu_rng_states"])
         # sometimes we have less number of devices
-        states["cuda_rng_states"] = states["cpu_rng_states"][:torch.cuda.device_count()]
+        states["cuda_rng_states"] = states["cuda_rng_states"][:torch.cuda.device_count()]
         try:
             torch.cuda.set_rng_state_all(states["cuda_rng_states"])
         except (IndexError, RuntimeError):
@@ -420,7 +478,7 @@ class Trainer:
            batch_idx: 
            results:
         """
-        _loss = results['loss'].item()
+        _loss = results['loss'].item() * self.config.training.num_gpus_per_node
         avg_loss = self.moving_average.update_key("loss", _loss)
         percent = 100. * self.__count_in_epoch / len(self.train_loader)
         logger.info(
@@ -431,75 +489,6 @@ class Trainer:
         if self.__tensorboard:
             self.__tensorboard.add_scalar("loss", _loss, self.__global_count + 1)
 
-    # NOT USED
-    # def __train_epoch(self, epoch):
-    #     self.model.train()
-
-    #     if self.__master:
-    #         if self.__count_in_epoch > 0:
-    #             logger.info("Resume the training!")
-    #         logger.info("Epoch %d/%d", epoch + 1, self.__total_num_epochs)
-
-    #     for batch_idx, batch in enumerate(self.train_loader):
-    #         # Resume the training
-    #         if self.__count_in_epoch > batch_idx:
-    #             continue
-    #         else:
-    #             self.__count_in_epoch = batch_idx
-
-    #         batch = move_to_device(batch, self.__device)
-    #         results = self.__train_iter(batch)
-
-    #         # Update the model
-    #         if self.__global_count % self.config.training.gradient_accumulation_steps == (
-    #             self.config.training.gradient_accumulation_steps - 1
-    #         ):
-    #             self.optimizer.step()
-    #             self.scheduler.step()
-    #             self.optimizer.zero_grad()
-
-    #         # Checkpointing
-    #         if self.__master:
-    #             if self.__save_in_seconds:
-    #                 current_time = time.time()
-    #                 iter_elapsed_time = current_time - self.__save_iter_start_time
-
-    #                 if iter_elapsed_time > self.config.saving.seconds_interval:
-    #                     self.__save_checkpoint()
-    #                     self.__save_iter_start_time = current_time
-    #             else:
-    #                 if self.__global_count % self.config.saving.iterations_interval == (
-    #                     self.config.saving.iterations_interval - 1
-    #                 ):
-    #                     self.__save_checkpoint()
-
-    #         # Logging
-    #         if self.__master:
-    #             if self.__log_in_seconds:
-    #                 current_time = time.time()
-    #                 iter_elapsed_time = current_time - self.__log_iter_start_time
-
-    #                 if iter_elapsed_time > self.config.logging.seconds_interval:
-    #                     self.__log_iteration(batch_idx, results)
-    #                     self.__log_iter_start_time = current_time
-    #             else:
-    #                 if self.__global_count % self.config.logging.iterations_interval == (
-    #                     self.config.logging.iterations_interval - 1
-    #                 ):
-    #                     self.__log_iteration(batch_idx, results)
-
-    #         self.__global_count += 1
-
-    #         # Validation
-    #         # if self._master:
-    #         #     if self.validation_loader is not None and self._global_count % self.config.training.validation_interval == (
-    #         #         self.config.training.validation_interval - 1
-    #         #     ):
-    #         #         self.validate()
-
-    #     # reset the counter
-    #     self.__count_in_epoch = 0
-    #     return 0
 
 def set_random_port(self):
     """

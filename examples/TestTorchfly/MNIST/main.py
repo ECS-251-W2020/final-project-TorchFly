@@ -9,7 +9,7 @@ import torch
 from torchvision import datasets, transforms
 
 # from torchfly_dev.training.trainer import Trainer
-from torchfly_dev.training.trainer2 import Trainer2
+from torchfly_dev.training.trainer import Trainer
 
 from model import CNNNet
 from dataloader import get_data_loader
@@ -22,10 +22,8 @@ def main(config=None):
     # set data loader
     train_loader, val_loader = get_data_loader(config)
     model = CNNNet(config)
-    trainer = Trainer2(config=config, model=model, train_loader=train_loader, validation_loader=val_loader)
+    trainer = Trainer(config=config, model=model, train_loader=train_loader, validation_loader=val_loader)
     trainer.train()
-    breakpoint()
-
 
 if __name__ == "__main__":
     main()

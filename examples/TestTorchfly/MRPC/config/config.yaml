@@ -1,7 +1,12 @@
 defaults:
     - hydra/job_logging: colorlog
     - hydra/hydra_logging: colorlog
+hydra:
+    run:
+      # constant if you want to resume the training
+      dir: ./outputs/exp1 # ./outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
 training:
+    resume: true
     # reproduce
     random_seed: 123
     num_gpus_per_node: 1
@@ -9,11 +14,13 @@ training:
     fp16: true
     fp16_opt_level: "O1" # O0 to disable fp16
     # Optimization
-    learning_rate: 1e-5
+    learning_rate: 1e-3
     gradient_accumulation_steps: 1
-    max_grad_norm: 1.0 # disabled when negative
+    max_gradient_norm: 1.0 # disabled when negative. used for clip_grad_norm
     optimizer: "AdamW"
-    batch_size: 16
+    scheduler: "WarmupLinear" # WarmupConstant, WarmupLinear, WarmupCosine, WarmupCosineWithHardRestarts
+    warmup_steps: 100 # disabled when negative 
+    batch_size: 64
     total_num_epochs: 10
     total_num_iterations: 10 # disabled when total_num_epochs > 0
 saving:
@@ -24,8 +31,8 @@ saving:
     # checkpointer
     num_checkpoints_to_keep: 1
     keep_checkpoint_every_num_seconds: 3600
-    resume_mode: true
 logging:
+    log_dir: "logs"
     color: true
     level: "INFO"    
     iterations_interval: -1 # disabled when negative

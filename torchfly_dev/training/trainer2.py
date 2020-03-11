@@ -279,9 +279,8 @@ class Trainer2:
                     ):
                         self.__log_iteration(self.__count_in_epoch, results)
 
-
+            # Validation
             if self.__master:
-
                 if self.__global_count % self.config.training.validation_iterations_interval == (
                         self.config.training.validation_iterations_interval - 1 
                     ):

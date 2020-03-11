@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 from transformers import RobertaForSequenceClassification
 
-class WarpModel(nn.Module):
+class InferenceModel(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.model = model
@@ -21,6 +21,9 @@ class WarpModel(nn.Module):
             "outputs": outputs
         }
         return results
+
+    def get_metrics(self, reset=False):
+        pass
 
 def get_model():
     model = RobertaForSequenceClassification.from_pretrained("roberta-base")
