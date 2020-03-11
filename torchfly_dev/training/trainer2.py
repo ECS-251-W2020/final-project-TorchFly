@@ -28,6 +28,11 @@ from ..utils import move_to_device, configure_logging
 
 logger = logging.getLogger(__name__)
 
+def getcwd():
+    try:
+        return get_original_cwd()
+    except:
+        return os.getcwd()
 
 class MovingAverage:
     def __init__(self, init_dict=None, decay=0.9):
@@ -115,7 +120,7 @@ class Trainer2:
 
         # Saving directory
         if self.config.saving.resume_mode:
-            self.config.saving.save_dir = get_original_cwd()
+            self.config.saving.save_dir = getcwd()
         else:
             self.config.saving.save_dir = os.getcwd()
         self.config.saving.save_dir = os.path.join(self.config.saving.save_dir, "Checkpoints")
