@@ -72,6 +72,7 @@ def main_loop(cfg):
         # print(elapsed_time.total_seconds())
 
     stop_instance(cfg.preempt.instance_name)
+    logger.info("The job finished!")
 
 
 @hydra.main(config_path='conf/config.yaml')

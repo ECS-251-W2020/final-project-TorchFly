@@ -1,13 +1,12 @@
-import tqdm
 from time import time
 from sys import stdout
 from warnings import warn
 import shutil
 
-__all__ = ['progress_bar']
+__all__ = ['master_bar', 'progress_bar']
 
 
-def is_notebook():
+def isnotebook():
     try:
         shell = get_ipython().__class__.__name__
         if shell == 'ZMQInteractiveShell':
@@ -20,18 +19,15 @@ def is_notebook():
         return False      # Probably standard Python interpreter
 
 
-IN_NOTEBOOK = is_notebook()
+IN_NOTEBOOK = isnotebook()
 
 if IN_NOTEBOOK:
-    progress_bar = tqdm.tqdm_notebook
     try:
         from IPython.display import clear_output, display, HTML
         import matplotlib.pyplot as plt
     except:
         warn("Couldn't import ipywidgets properly, progress bar will use console behavior")
         IN_NOTEBOOK = False
-else:
-    progress_bar = tqdm.tqdm
 
 NO_BAR = False
 WRITER_FN = print
@@ -305,10 +301,10 @@ def printing():
     return False if NO_BAR else (stdout.isatty() or IN_NOTEBOOK)
 
 
-# if IN_NOTEBOOK:
-#     master_bar, progress_bar = NBMasterBar, NBProgressBar
-# else:
-#     master_bar, progress_bar = ConsoleMasterBar, ConsoleProgressBar
+if IN_NOTEBOOK:
+    master_bar, progress_bar = NBMasterBar, NBProgressBar
+else:
+    master_bar, progress_bar = ConsoleMasterBar, ConsoleProgressBar
 
 
 def force_console_behavior():

@@ -4,12 +4,12 @@ defaults:
 hydra:
     run:
       # constant if you want to resume the training
-      dir: ./outputs/exp1 # ./outputs/${now:%Y-%m-%d}/${now:%H-%M-%S} #./outputs/exp1 # 
+      dir: ./outputs/exp2 # ./outputs/${now:%Y-%m-%d}/${now:%H-%M-%S} #./outputs/exp1 # 
 training:
     resume: true
     # reproduce
     random_seed: 123
-    num_gpus_per_node: 2
+    num_gpus_per_node: 1
     # Mixed Precision
     fp16: true
     fp16_opt_level: "O2" # O0 to disable fp16
@@ -20,17 +20,17 @@ training:
     optimizer: "AdamW"
     scheduler: "WarmupLinear" # WarmupConstant, WarmupLinear, WarmupCosine, WarmupCosineWithHardRestarts
     warmup_steps: 30 # disabled when negative 
-    batch_size: 32
+    batch_size: 4
     total_num_epochs: 3
     total_num_iterations: 100 # disabled when total_num_epochs > 0
     validation_iterations_interval: -1 # set to infinite to disable validation
 saving:
     # when saving.iterations_interval and saving.seconds_interval
     # are both negative, save the models for every epoch
-    iterations_interval: 50000
-    seconds_interval: -1 # disabled when iterations_interval > 1
+    iterations_interval: -1
+    seconds_interval: 100 # disabled when iterations_interval > 1
     # checkpointer
-    num_checkpoints_to_keep: 1
+    num_checkpoints_to_keep: 2
     keep_checkpoint_every_num_seconds: 3600
 logging:
     log_dir: "logs"
