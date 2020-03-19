@@ -13,36 +13,12 @@ import yaml
 import matplotlib.pyplot as plt
 import random
 from math import sqrt
+import nltk.stopwords as noisy_words
 
-def smooth_text(text, dominant_word):
+def smooth_text_plus(text, dominant_word):
     """
     smooth the text by removing the noisy words
     """
-    noisyword = [
-        ([0, 0, 0],156), 
-        ([156, 156, 156], 156),
-        ([154, 154, 154], 154), 
-        ([134, 134, 134], 134), 
-        ([149, 149, 149], 149), 
-        ([126, 126, 126], 126), 
-        ([105, 105, 105], 105), 
-        ([14, 14, 14], 14), 
-        ([124, 124, 124], 124), 
-        ([158, 158, 158], 158), 
-        ([147, 147, 147], 147), 
-        ([96, 96, 96], 96),
-        ([168, 168, 168], 168), 
-        ([148, 148, 148], 148), 
-        ([110, 110, 110], 110), 
-        ([135, 135, 135], 135), 
-        ([119, 119, 119], 119), 
-        ([161, 161, 161], 161),
-        ([177, 177, 177], 177), 
-        ([118, 118, 118], 118), 
-        ([123, 123, 123], 123), 
-        ([162, 162, 162], 162), 
-    ]
-
     center = []
     for l in dominant_word:
         center_array = np.array([l]*3)
@@ -61,12 +37,6 @@ def smooth_text(text, dominant_word):
     return text
 
 def create_h5(split, data_path, h5_path, resize_wh=128, data_augmentation=False):
-    if split == "train":
-        #load the json file
-        with open('/'.join([data_path, "train.json"]), 'r') as f:
-            split_json = json.load(f)
-        #initialize the hdf5 files
-        h5_split = h5py.File(os.path.join(h5_path, 'gandraw_train.h5'), 'w')
     if split == "val":
         with open('/'.join([data_path, "val.json"]), 'r') as f:
             split_json = json.load(f)
@@ -75,6 +45,13 @@ def create_h5(split, data_path, h5_path, resize_wh=128, data_augmentation=False)
         with open('/'.join([data_path, "test.json"]), 'r') as f:
             split_json = json.load(f)
         h5_split = h5py.File(os.path.join(h5_path, 'gandraw_test.h5'), 'w')
+    if split == "train":
+        #load the json file
+        with open('/'.join([data_path, "train.json"]), 'r') as f:
+            split_json = json.load(f)
+        #initialize the hdf5 files
+        h5_split = h5py.File(os.path.join(h5_path, 'gandraw_train.h5'), 'w')
+    
          
     c_split = 0
     

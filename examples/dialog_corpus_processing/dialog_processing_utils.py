@@ -25,9 +25,6 @@ import template_manager
 from service_client import get_client
 
 def detect_question_DA(dialog_act):
-    r"""
-    dialog_act is the dialog_act from Dian, which is a dictionary that contains the text for the sentence segment and the associated dialog act tag
-    """
     if (dialog_act["DA"] == "yes_no_question" or dialog_act["DA"] == "open_question_factual" or dialog_act["DA"] == "open_question_opinion" or dialog_act["DA"] == "open_question") and float(dialog_act['confidence']) > 0.5:
         return (dialog_act['text'], True, float(dialog_act['confidence']))
     # elif amz_dialog_act == "Information_RequestIntent" or amz_dialog_act == "Opinion_RequestIntent":
@@ -49,18 +46,12 @@ def detect_question_DA_update(returnnlp_util, segment_index):
 
 
 def detect_abandoned_answer_DA(dialog_act, sys_info):
-    r"""
-    Decode whether users have abandoned dialog_act
-    """
     if dialog_act["DA"] == "abandoned" and float(dialog_act["confidence"]) > 0.9 and not sys_info['sys_noun_phrase']:
         return True
     return False
 
 
 def detect_abandoned_answer_DA_update(returnnlp_util, segment_index, sys_info):
-    """
-    detect whether  users have abandoned  dialog_act
-    """
     if returnnlp_util.has_dialog_act(DialogActEnum.ABANDONED) and not sys_info['sys_noun_phrase']:
         return True
     return False
@@ -94,9 +85,6 @@ def detect_dialog_label(utterance):
     return None
 
 def detect_command(input_utterance, input_returnnlp):
-    """
-    Detect whether a command (not a device command) is given from the user
-    """
     command_detector = CommandDetector(input_utterance, input_returnnlp)
    
     return command_detector.has_command()
@@ -116,9 +104,6 @@ def detect_same_yes_or_no(user_dialog_intent, system_response):
 
 
 def detect_ignored_dialog(utterance, ignore_pattern):
-    r"""
-    return a list of detected ignored dialog type in utterance
-    """
     result = []
     for pattern in ignore_pattern:
         searched_word = re.search(pattern, utterance)
@@ -129,9 +114,6 @@ def detect_ignored_dialog(utterance, ignore_pattern):
 
 # Create a function to filter out certain
 def filter_entity_terms(entity):
-    r"""
-        return True if the entity should be filtered
-    """
     result = False
     if entity in LEAGUE_DIALOG_MAP.keys():
         result = True
@@ -139,9 +121,6 @@ def filter_entity_terms(entity):
 
 
 def stop_words_word2vec_disambiguater(utterance):
-    r"""
-    Return True if we should transit stop_words to word2vec
-    """
     for word in word2vec_TERMS:
         if re.search(word, utterance.lower()):
             return True
@@ -149,9 +128,6 @@ def stop_words_word2vec_disambiguater(utterance):
 
 
 def get_sys_dialog_entity(utterance, sys_info):
-    r'''
-    Return the best Quality Name Entity
-    '''
     sys_ner = []
     sys_topic_ner = []
     sys_knowledge_ner = []
@@ -186,11 +162,6 @@ def get_sys_dialog_entity(utterance, sys_info):
                             sys_knowledge_ner.append(knowledge)
                             knowledge_dialog_detected = True
                             break
-
-    # Just for checking purpose
-    # if sys_knowledge_ner:
-    #     logging.info("[dialog MODULE] the detected google knowledge ner is : {}".format(
-    #         sys_knowledge_ner[0]))
 
     result_ners = []
     if sys_topic_ner or sys_knowledge_ner:
@@ -249,21 +220,10 @@ def get_sys_dialog_entity(utterance, sys_info):
 
                 if not filter_entity_terms(selected_ner['name']):
                     result_ners.append(selected_ner.copy())
-        '''
-        elif sys_ner and 'topic_dialog' in sys_info['sys_intent']['topic']:
-            selected_ner = {}
-            selected_ner['name'] = sys_ner[0]
-            selected_ner['label'] = None
-            selected_ner['dialog_type'] = None
-        '''
-    #logging.info("[dialogS] All the detected ners: {}".format(result_ners))
     return result_ners
 
 
 def ground_question_with_dialog_type(utterance, current_dialog, detected_dialogs):
-    r"""
-    Ground questions that has keyword player, game and team with dialog type if no dialog type is detected
-    """
     result = utterance
 
 
@@ -291,9 +251,6 @@ def detect_dialog_googlekg(sys_info):
 
 
 def get_sys_other_topic(sys_info, detected_dialogs, utterance):
-    r"""
-    Return the other topic detected by system while no dialog intent is detected
-    """
     detect_dialog = False
     all_sys_detected_topic = []
 
@@ -319,23 +276,10 @@ def get_sys_other_topic(sys_info, detected_dialogs, utterance):
                 if not any(re.search(x, utterance) for x in WRONG_JUMP_OUT.get(module, [])):
                     return MODULE_KEYWORD_MAP.get(module, True)
                 #logging.debug("[dialogS_MODULE] wrong jumpout: {}".format(WRONG_JUMP_OUT.get(module, [])))
-
-        # if sys_info['sys_module'] in SYS_OTHER_MODULE_LIST:
-        #     return MODULE_KEYWORD_MAP.get(sys_info['sys_module'], True)
-
-        # If topic is not detected
-
-        # for knowledge in sys_info['sys_knowledge']:
-        #     if knowledge:
-        #         if knowledge[3] != 'dialogs' and knowledge[3] != '__EMPTY__' and float(knowledge[2]) > 500 and (knowledge[1].lower() not in EXCEPTION_GOOGLE_KNOWLEDGE_KEY):
-        #             return True
     return None
 
 
 def check_utterance_coherence(sys_info, detected_entities, user_context):
-    r"""
-    Check if the keywords responded from users is shared with the previous utterance
-    """
     previous_response = user_context['previous_system_response']
 
     # A bit data processing
@@ -356,29 +300,14 @@ def check_utterance_coherence(sys_info, detected_entities, user_context):
 
 
 def check_talked_entities(test_entity, talked_entities):
-    r"""
-    Return True, if none of the repeated entities are found in talked entities. Vice Versa, Return False.
-    """
     result = True
     for x in talked_entities:
         if re.search(test_entity, x.lower()):
             return False
     return result
-# dialog Response F
-# Detect dialog Type in utterance
-
-# Define a function to create a dictionary_item
 
 
 def create_qa_dict_from_list(qa_list, data):
-    r'''
-        Create a nested dictionary item from a list, where the list is formatted as:
-        [key_1,key_2,..., key_3, value]
-        qa_list: List of keys that you want to include in the nested dictionary
-        data: the data you want to store in the last key of the dictionary
-        return:
-            a nested dictionary, with data as its ending data
-    '''
     result_dict = {}
     for i, key in enumerate(reversed(qa_list)):
         if i == 0:
@@ -392,9 +321,6 @@ def create_qa_dict_from_list(qa_list, data):
 
 
 def access_nested_dict(nested_dict, key):
-    r'''
-    Give a list of keys for a nested data, return the data. If the key does not exist return None
-    '''
     try:
         data = nested_dict[key[0]]
         for k in key[1:]:
@@ -405,9 +331,6 @@ def access_nested_dict(nested_dict, key):
 
 
 def update_nesteddict_with_new_key(nested_dict, key, value):
-    r'''
-    determine which part of the key is missing from the nested_dict
-    '''
     data = nested_dict.get(key[0], None)
     if data:
         update_nesteddict_with_new_key(nested_dict[key[0]], key[1:], value)
@@ -416,9 +339,6 @@ def update_nesteddict_with_new_key(nested_dict, key, value):
 
 
 def update_nesteddict_with_existing_key(nested_dict, key, updated_value):
-    r'''
-        Update the existing subset key at the right spot. The updated value should be updated at the end of the keys
-    '''
     data = nested_dict[key[0]]
     if isinstance(data, dict):
         update_nesteddict_with_existing_key(
@@ -430,9 +350,6 @@ def update_nesteddict_with_existing_key(nested_dict, key, updated_value):
 
 
 def load_dialog_teams(dialog_type):
-    r"""
-    Load the list of teams belonging to a certain dialog type
-    """
     result = None
     # Define the path to the dialog team data
     dialog_team_path = 'teams'
@@ -448,9 +365,6 @@ def load_dialog_teams(dialog_type):
 
 
 def load_all_dialog_teams():
-    r"""
-    Load all the existing teams and create a big list of them
-    """
     dialog_team_path = 'teams'
 
     result = []
@@ -540,12 +454,6 @@ def get_popular_dialog_topics():
 
 
 def get_KG_news(entity, keyword=[], category=[]):
-    r"""
-Extract News from KG provided from Kevin
-Input:
-    entity: A list of entity names,
-    keyword: A list of keywords to limit the search
-"""
     news = kgapi_events(entity, keyword, category)
     if news:
         return news
@@ -669,11 +577,6 @@ def filter_profanity(text):
 
 
 def profanity_check(text):
-    # profanity check built by the client
-    # r = client.batch_detect_profanity(utterances=[text])
-    # the "1" here means the source is the statistical_model where if it is 0, it would be blacklist
-    # return r["offensivenessClasses"][0]["values"][1]["offensivenessClass"]
-    # return 1 means it is offensive; 0 means not offensive
 
     for w in blacklist:
         if re.search(r"\b%s\b" % w, text.lower()):
@@ -951,9 +854,6 @@ def unable_answer_question_error_handle(user_utterance, user_context, sys_info, 
     detected_noun_phrase = sys_info.get('sys_noun_phrase', [])
     detected_noun_phrase.sort(key=lambda s: len(s.split()))
     detected_noun_phrase.reverse()
-    # initilaize returnnlp
-    # returnnlp = sys_info['features']['returnnlp']
-    # initialize the question type
     detected_question_types = user_context["detected_question_types"]
 
     # paraphrase the question when the length of the question is less than 10
