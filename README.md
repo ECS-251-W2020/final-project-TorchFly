@@ -52,7 +52,7 @@ Please see examples of how to use this repo:
 
 2. Set up Google Cloud Preemptible Instance with [instructions](https://github.com/ECS-251-W2020/final-project-torchfly/blob/master/examples/GCP%20Preemptible/README.md).
 
-3. Start training BERT with 
+3. Start training BERT with [code here](https://github.com/qywu/LargePretrain).
 
 
 ## Weekly Meeting Notes
