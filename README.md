@@ -42,6 +42,19 @@ To use the repo,
 import torchfly_dev
 ```
 
+
+## Usage
+
+Please see examples of how to use this repo:
+
+1. First preprocess your data into sectors. You should read this to do it. [here](https://github.com/ECS-251-W2020/final-project-torchfly/blob/master/examples/corpus_processing/README.md)
+
+
+2. Set up Google Cloud Preemptible Instance with [instructions](https://github.com/ECS-251-W2020/final-project-torchfly/blob/master/examples/GCP%20Preemptible/README.md).
+
+3. Start training BERT with 
+
+
 ## Weekly Meeting Notes
 
 The most recent meeting notes are updated under `meeting-notes` directory. 
